@@ -919,6 +919,14 @@ async def list_execution_plan_steps(plan_id: str) -> List[Dict[str, Any]]:
         return [_hydrate_step(row) for row in rows]
 
 
+async def get_execution_plan_step(step_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM execution_plan_steps WHERE id = ?", (step_id,))
+        row = await cur.fetchone()
+        return _hydrate_step(row) if row else None
+
+
 async def set_execution_plan_status(plan_id: str, status: str):
     now = int(time.time())
     approved_at = now if status == "approved" else None
@@ -947,6 +955,28 @@ async def set_execution_step_status(step_id: str, status: str):
             WHERE id = ?
         """, (status, approved_at, completed_at, now, step_id))
         await db.commit()
+
+
+async def attach_execution_step_actions(step_id: str, action_ids: List[str]) -> Optional[Dict[str, Any]]:
+    step = await get_execution_plan_step(step_id)
+    if not step:
+        return None
+    existing = step.get("action_ids") or []
+    merged = []
+    for action_id in [*existing, *action_ids]:
+        if action_id not in merged:
+            merged.append(action_id)
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            UPDATE execution_plan_steps
+            SET action_ids = ?,
+                status = 'actions_ready',
+                updated_at = ?
+            WHERE id = ?
+        """, (_json_dumps(merged), now, step_id))
+        await db.commit()
+    return await get_execution_plan_step(step_id)
 
 
 async def create_command_run(

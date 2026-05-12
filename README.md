@@ -149,10 +149,13 @@ POST /api/plans/propose
 GET  /api/plans
 POST /api/plans/{plan_id}/approve
 POST /api/plans/steps/{step_id}/approved
+POST /api/plan-steps/{step_id}/actions/propose
 ```
 
 Plans are stored in SQLite with sessions, steps, risks, files and verification checks.
 The UI exposes them in the `Plans` tab and also through the `Plan` mode in Command Center.
+Approved plans and approved steps can generate pending AI actions, preserving the normal
+diff review and approval queue before any file is changed.
 
 ## Controlled Learning
 

@@ -935,7 +935,7 @@ function ProjectsView({ projects, projectTasks }) {
   );
 }
 
-function PlansView({ plans, commands, settings, workspaces, refreshAll }) {
+function PlansView({ plans, commands, actions, settings, workspaces, refreshAll }) {
   const [goal, setGoal] = useState("");
   const [workspace, setWorkspace] = useState(settings?.working_directory || "");
   const [busy, setBusy] = useState(false);
@@ -993,6 +993,34 @@ function PlansView({ plans, commands, settings, workspaces, refreshAll }) {
     await api(`/api/commands/${proposed.command.id}/run`, { method: "POST", timeoutMs: 130000 });
     await refreshAll();
   }
+
+  async function generateStepActions(step) {
+    setBusy(true);
+    setMessage(`Генерирую pending actions для шага: ${step.title}`);
+    try {
+      const data = await api(`/api/plan-steps/${step.id}/actions/propose`, {
+        method: "POST",
+        timeoutMs: 90000,
+        body: JSON.stringify({
+          provider: "ollama",
+          model: settings?.default_model || "qwen3:latest",
+          max_actions: 3,
+        }),
+      });
+      setMessage(`Создано pending actions: ${data.actions?.length || 0}`);
+      await refreshAll();
+    } catch (error) {
+      setMessage(error.message || String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const actionsById = useMemo(() => {
+    const map = new Map();
+    actions.forEach((action) => map.set(action.id, action));
+    return map;
+  }, [actions]);
 
   return (
     <section className="view plans-layout">
@@ -1062,10 +1090,31 @@ function PlansView({ plans, commands, settings, workspaces, refreshAll }) {
                   <p>{step.objective || step.expected_result}</p>
                   {!!step.files?.length && <small>Files: {step.files.join(", ")}</small>}
                   {!!step.risks?.length && <small>Risks: {step.risks.join(", ")}</small>}
+                  {!!step.action_ids?.length && (
+                    <div className="step-actions-linked">
+                      {step.action_ids.map((actionId) => {
+                        const action = actionsById.get(actionId);
+                        return (
+                          <span key={actionId}>
+                            <ShieldCheck size={13} />
+                            {action ? `${action.title} · ${action.status}` : actionId}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                   <div className="decision-row">
                     <button className="ghost" onClick={() => setStepStatus(step.id, "approved")}>
                       <Check size={15} />
                       Step approve
+                    </button>
+                    <button
+                      className="ghost"
+                      onClick={() => generateStepActions(step)}
+                      disabled={busy || plan.status !== "approved" || !["approved", "actions_ready"].includes(step.status)}
+                    >
+                      <WandSparkles size={15} />
+                      Generate actions
                     </button>
                     <button className="ghost" onClick={() => setStepStatus(step.id, "completed")}>
                       <CircleDot size={15} />
@@ -1731,6 +1780,7 @@ function App() {
         <PlansView
           plans={plans}
           commands={commands}
+          actions={actions}
           settings={settings}
           workspaces={workspaces}
           refreshAll={refreshAll}

@@ -159,6 +159,9 @@ Protected areas:
 The Agent OS layer stores each substantial request as an `execution_session`.
 The planner creates an `execution_plan` with ordered `execution_plan_steps`.
 Each step keeps objective, expected result, target files, checks, risks and approval state.
+Approved steps can request AI-generated pending actions through the normal action engine.
+The step stores linked `action_ids`, while `action_requests` still own diffs, approvals,
+backups and final writes.
 
 Safe command execution is intentionally narrow. The backend only runs allowlisted
 verification commands such as `npm run build`, `python -m unittest`, `cargo check`

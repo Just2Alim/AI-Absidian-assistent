@@ -31,7 +31,8 @@ from database import (
     list_action_requests, get_action_request, get_audit_log,
     create_command_run, finish_command_run, get_command_run, mark_command_run_started,
     list_command_runs, list_execution_plans, list_execution_sessions,
-    get_execution_plan, set_execution_plan_status, set_execution_step_status,
+    attach_execution_step_actions, get_execution_plan, get_execution_plan_step,
+    set_execution_plan_status, set_execution_step_status,
 )
 from vault_manager import get_indexer, set_indexer, VaultIndexer
 from ai_engine import ai_engine, PROVIDERS
@@ -310,6 +311,11 @@ class CommandProposalRequest(BaseModel):
     session_id: Optional[str] = None
     plan_id: Optional[str] = None
     step_id: Optional[str] = None
+
+class StepActionRequest(BaseModel):
+    provider: str = "ollama"
+    model: str = "qwen3:latest"
+    max_actions: int = 3
 
 
 # ─────────────────────────────────────────────
@@ -825,9 +831,57 @@ async def reject_plan(plan_id: str):
     return {"status": "rejected", "plan": await get_execution_plan(plan_id)}
 
 
+@app.post("/api/plan-steps/{step_id}/actions/propose")
+async def propose_step_actions(step_id: str, req: StepActionRequest):
+    indexer = get_indexer()
+    if not indexer:
+        raise HTTPException(400, "Vault not configured")
+    step = await get_execution_plan_step(step_id)
+    if not step:
+        raise HTTPException(404, "Plan step not found")
+    plan = await get_execution_plan(step["plan_id"])
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    if plan["status"] != "approved":
+        raise HTTPException(400, "Approve the execution plan before generating step actions")
+    if step["status"] not in {"approved", "actions_ready"}:
+        raise HTTPException(400, "Approve this plan step before generating actions")
+
+    workspace_root = _safe_workspace_root(plan["workspace"])
+    step_goal = "\n".join([
+        "Generate pending approval actions for this approved execution-plan step.",
+        f"Plan: {plan['title']}",
+        f"Original user goal: {plan.get('goal') or ''}",
+        f"Step {step['position']}: {step['title']}",
+        f"Objective: {step.get('objective') or ''}",
+        f"Expected result: {step.get('expected_result') or ''}",
+        f"Target files: {', '.join(step.get('files') or []) or 'unspecified'}",
+        f"Risks to respect: {', '.join(step.get('risks') or []) or 'none'}",
+        "Only create actions needed for this single step. Keep every file write inside the active workspace.",
+    ])
+    try:
+        result = await propose_ai_actions(
+            step_goal,
+            indexer,
+            provider=req.provider,
+            model=req.model,
+            max_actions=req.max_actions,
+            working_directory=workspace_root,
+        )
+        action_ids = [action["id"] for action in result.get("actions", [])]
+        updated_step = await attach_execution_step_actions(step_id, action_ids)
+        return {
+            "status": "actions_ready",
+            "step": updated_step,
+            **result,
+        }
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.post("/api/plans/steps/{step_id}/{status}")
 async def update_plan_step(step_id: str, status: str):
-    if status not in {"approved", "rejected", "completed", "pending"}:
+    if status not in {"approved", "rejected", "completed", "pending", "actions_ready"}:
         raise HTTPException(400, "Unsupported step status")
     await set_execution_step_status(step_id, status)
     return {"status": status, "step_id": step_id}

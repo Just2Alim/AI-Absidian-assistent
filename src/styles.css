@@ -924,6 +924,23 @@ select:focus {
   line-height: 1.45;
 }
 
+.step-actions-linked {
+  display: grid;
+  gap: 6px;
+}
+
+.step-actions-linked span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 8px 9px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .commands-list,
 .memory-list {
   display: grid;
