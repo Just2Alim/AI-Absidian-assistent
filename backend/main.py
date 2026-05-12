@@ -35,6 +35,7 @@ from watcher import vault_watcher
 from action_manager import PROJECTS_ROOT, approve_action, propose_action, reject_action
 from ai_actions import propose_ai_actions
 from analytics_engine import build_overview
+from context_pack import build_workspace_context_pack, context_pack_prompt
 from project_intelligence import load_all_project_tasks, load_project, load_projects
 from semantic_search import hybrid_rag_search
 from security import ensure_auth_token, is_loopback_host, is_valid_token, read_auth_token, token_fingerprint
@@ -534,6 +535,13 @@ async def project_detail(project_id: str):
     return {"project": project}
 
 
+@app.get("/api/context/workspace")
+async def workspace_context_pack(path: Optional[str] = None):
+    settings = await app_settings()
+    workspace_root = _safe_workspace_root(path or settings.get("working_directory"))
+    return {"context_pack": build_workspace_context_pack(_current_vault_root(), workspace_root)}
+
+
 @app.get("/api/notes")
 async def list_notes(limit: int = 200, offset: int = 0):
     notes = await get_all_notes(limit, offset)
@@ -808,6 +816,7 @@ async def chat_stream(req: ChatRequest):
     if req.include_vault_context and indexer:
         stats = await get_vault_stats()
         recent = await get_all_notes(limit=10)
+        context_pack = build_workspace_context_pack(_current_vault_root(), workspace_root)
         vault_context = f"""
 Vault: {str(indexer.vault_root)}
 Active working directory: {workspace_root}
@@ -817,6 +826,8 @@ Recent notes: {', '.join([n.get('title','') for n in recent[:5]])}
 
 Workspace rule: any file work must stay inside Active working directory.
 If a task targets another project, ask the user to switch workspace first.
+
+{context_pack_prompt(context_pack)}
 """
 
     messages = [{"role": m.role, "content": m.content} for m in req.messages]

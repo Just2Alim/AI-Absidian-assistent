@@ -129,7 +129,7 @@ Protected areas:
 
 - Hybrid local semantic search ✅
 - Embedding index for semantic search
-- Context packs per project
+- Context packs per project ✅
 - Link recommendations
 - Orphan note repair suggestions
 - Daily and weekly AI briefs

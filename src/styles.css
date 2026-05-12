@@ -581,6 +581,11 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.signal-row.compact span {
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
 .signal-row span {
   border-radius: 999px;
   background: var(--surface-soft);
@@ -762,6 +767,72 @@ select:focus {
 
 .path-hint {
   overflow-wrap: anywhere;
+}
+
+.context-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.context-main,
+.context-grid div,
+.risk-list span {
+  min-width: 0;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 11px 12px;
+}
+
+.context-main span,
+.context-grid span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.context-main strong,
+.context-grid strong {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.context-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.risk-list {
+  display: grid;
+  gap: 7px;
+}
+
+.risk-list span {
+  color: #7b4a00;
+  background: #fff0c9;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.tree-preview {
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px 12px;
+}
+
+.tree-preview summary {
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-weight: 760;
+}
+
+.tree-preview pre {
+  margin: 10px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .vault-list-panel {
@@ -1125,7 +1196,8 @@ select:focus {
   .project-card-head,
   .project-meta,
   .tasks-table div,
-  .project-detail-grid {
+  .project-detail-grid,
+  .context-grid {
     grid-template-columns: 1fr;
   }
 

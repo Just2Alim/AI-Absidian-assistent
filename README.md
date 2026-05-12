@@ -128,6 +128,18 @@ GET /api/projects/tasks
 GET /api/projects/{project_id}
 ```
 
+## Workspace Context Packs
+
+The active workspace has a dedicated context pack:
+
+```text
+GET /api/context/workspace?path=/Users/justalim/projects/новый проект
+```
+
+It summarizes the mapped vault project, runtime markers, package scripts, git state,
+important files, top-level tree, risks, and instructions. Chat prompts now include this
+pack automatically, so the AI answers with stronger awareness of the selected directory.
+
 ## AI Action Engine
 
 Natural language goals can become reviewable pending actions:

@@ -18,6 +18,7 @@ import {
   LayoutDashboard,
   LockKeyhole,
   Network,
+  PackageCheck,
   Palette,
   Play,
   RefreshCcw,
@@ -416,11 +417,32 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
   const [remoteTask, setRemoteTask] = useState("");
   const [mode, setMode] = useState("chat");
   const [workspace, setWorkspace] = useState(settings?.working_directory || "");
+  const [contextPack, setContextPack] = useState(null);
+  const [contextLoading, setContextLoading] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setWorkspace(settings?.working_directory || "");
   }, [settings?.working_directory]);
+
+  useEffect(() => {
+    if (!workspace) return;
+    let cancelled = false;
+    setContextLoading(true);
+    api(`/api/context/workspace?path=${encodeURIComponent(workspace)}`, { timeoutMs: 20000 })
+      .then((data) => {
+        if (!cancelled) setContextPack(data.context_pack || null);
+      })
+      .catch(() => {
+        if (!cancelled) setContextPack(null);
+      })
+      .finally(() => {
+        if (!cancelled) setContextLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace]);
 
   async function sendChat() {
     const text = input.trim();
@@ -597,6 +619,7 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
             <p className="muted path-hint">{workspace || "No workspace selected"}</p>
           </div>
         </div>
+        <ContextPackCard contextPack={contextPack} loading={contextLoading} />
         <div className="panel">
           <div className="panel-head compact">
             <h2>Mobile Inbox</h2>
@@ -616,6 +639,55 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
         <ActionQueue actions={actions} refreshAll={refreshAll} compact />
       </div>
     </section>
+  );
+}
+
+function ContextPackCard({ contextPack, loading }) {
+  const project = contextPack?.project;
+  const runtime = contextPack?.runtime || {};
+  const git = contextPack?.git || {};
+  const risks = contextPack?.risks || [];
+  return (
+    <div className="panel context-panel">
+      <div className="panel-head compact">
+        <h2>Context Pack</h2>
+        <PackageCheck size={18} />
+      </div>
+      {loading && <p className="muted">Loading workspace context...</p>}
+      {!loading && !contextPack && <p className="muted">No workspace context loaded.</p>}
+      {contextPack && (
+        <div className="context-stack">
+          <div className="context-main">
+            <span>Mapped project</span>
+            <strong>{project?.title || "not mapped"}</strong>
+          </div>
+          <div className="context-grid">
+            <div>
+              <span>Runtime</span>
+              <strong>{runtime.signals?.join(", ") || "unknown"}</strong>
+            </div>
+            <div>
+              <span>Git</span>
+              <strong>{git.available ? `${git.branch || "repo"} · ${git.dirty || 0} changes` : git.reason || "unknown"}</strong>
+            </div>
+          </div>
+          {!!runtime.scripts?.length && (
+            <div className="signal-row compact">
+              {runtime.scripts.slice(0, 8).map((script) => <span key={script}>{script}</span>)}
+            </div>
+          )}
+          {!!risks.length && (
+            <div className="risk-list">
+              {risks.map((risk) => <span key={risk}>{risk}</span>)}
+            </div>
+          )}
+          <details className="tree-preview">
+            <summary>Workspace tree</summary>
+            <pre>{(contextPack.tree || []).slice(0, 50).join("\n")}</pre>
+          </details>
+        </div>
+      )}
+    </div>
   );
 }
 
