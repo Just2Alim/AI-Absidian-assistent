@@ -1,0 +1,14 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+target/
+data/*.db
+data/*.duckdb
+data/logs/
+data/file-backups/
+.env
+.env.*
+!.env.example
