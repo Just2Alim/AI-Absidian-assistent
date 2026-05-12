@@ -35,3 +35,7 @@ jobs:
       - name: Rust native core
         working-directory: native-core
         run: cargo check
+
+      - name: Tauri desktop shell
+        working-directory: src-tauri
+        run: cargo check

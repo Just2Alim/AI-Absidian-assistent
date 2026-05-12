@@ -63,20 +63,18 @@ flowchart LR
 
 ## Recommended Local Model
 
-Target model: `qwen3:14b`.
+Target model: `qwen3:latest`.
 
-Reason: it has a larger context window and stronger reasoning headroom for vault/project work.
-Current installed fallback: `llama3:latest`.
+Reason: Qwen3 gives stronger local reasoning for vault/project work while still running through Ollama.
+Optional larger model: `qwen3:14b`.
 
 Install:
 
 ```bash
-ollama pull qwen3:14b
+ollama pull qwen3
 ```
 
-The app defaults to `llama3:latest` because it is already installed locally. Once `qwen3:14b`
-is present, switch the default in `backend/main.py`, `backend/ai_engine.py`, and
-`scripts/obsidian_local_agent.py`.
+The app defaults to `qwen3:latest`. The previous fallback remains `llama3:latest` if needed.
 
 ## Safety Model
 
@@ -105,6 +103,7 @@ Protected areas:
 - vault `raw/`
 - `.git`
 - paths outside `/Users/justalim/projects`
+- paths outside the selected Active Workspace for AI `write_file` actions
 
 ## Roadmap
 

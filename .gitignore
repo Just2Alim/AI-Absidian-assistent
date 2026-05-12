@@ -5,6 +5,8 @@ __pycache__/
 node_modules/
 dist/
 target/
+src-tauri/gen/
+src-tauri/target/
 data/*.db
 data/*.duckdb
 data/auth-token.txt

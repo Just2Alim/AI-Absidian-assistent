@@ -4,8 +4,10 @@ Main application entry point with all API routes.
 """
 
 import asyncio
+import ipaddress
 import json
 import os
+import socket
 import sys
 import time
 import uuid
@@ -30,12 +32,14 @@ from database import (
 from vault_manager import get_indexer, set_indexer, VaultIndexer
 from ai_engine import ai_engine, PROVIDERS
 from watcher import vault_watcher
-from action_manager import approve_action, propose_action, reject_action
+from action_manager import PROJECTS_ROOT, approve_action, propose_action, reject_action
 from ai_actions import propose_ai_actions
 from analytics_engine import build_overview
 from project_intelligence import load_all_project_tasks, load_project, load_projects
 from semantic_search import hybrid_rag_search
 from security import ensure_auth_token, is_loopback_host, is_valid_token, read_auth_token, token_fingerprint
+
+DEFAULT_VAULT_PATH = Path("/Users/justalim/projects/obsidian-vault")
 
 # ─────────────────────────────────────────────
 # App Setup
@@ -75,13 +79,21 @@ PUBLIC_PATHS = {
 }
 
 
+def _client_host(request: Request) -> Optional[str]:
+    host = request.client.host if request.client else None
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if host and is_loopback_host(host) and forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return host
+
+
 @app.middleware("http")
 async def local_network_auth(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
     if request.url.path in PUBLIC_PATHS or not request.url.path.startswith("/api/"):
         return await call_next(request)
-    if is_loopback_host(request.client.host if request.client else None):
+    if is_loopback_host(_client_host(request)):
         return await call_next(request)
 
     raw_token = request.headers.get("X-ObsidianAI-Token")
@@ -138,8 +150,10 @@ async def startup():
     vault_path = (
         await get_vault_config("vault_path")
         or os.environ.get("OBSIDIAN_AI_VAULT")
-        or "/Users/justalim/projects/obsidian-vault"
+        or str(DEFAULT_VAULT_PATH)
     )
+    if "iCloud~md~obsidian" in str(vault_path) and DEFAULT_VAULT_PATH.exists():
+        vault_path = str(DEFAULT_VAULT_PATH)
     if vault_path and Path(vault_path).expanduser().exists():
         indexer = set_indexer(vault_path)
         loop = asyncio.get_event_loop()
@@ -202,9 +216,10 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     provider: str = "ollama"
-    model: str = "llama3:latest"
+    model: str = "qwen3:latest"
     vault_context: Optional[str] = None
     include_vault_context: bool = True
+    working_directory: Optional[str] = None
 
 class CreateNoteRequest(BaseModel):
     folder: str = ""
@@ -239,32 +254,105 @@ class AppSettingsRequest(BaseModel):
     accent: Optional[str] = None
     default_model: Optional[str] = None
     command_mode: Optional[str] = None
+    working_directory: Optional[str] = None
 
 class AIActionRequest(BaseModel):
     goal: str
     provider: str = "ollama"
-    model: str = "llama3:latest"
+    model: str = "qwen3:latest"
     max_actions: int = 5
+    working_directory: Optional[str] = None
 
 
 # ─────────────────────────────────────────────
 # Routes — Health & Config
 # ─────────────────────────────────────────────
 
+DEFAULT_WORKSPACE = (
+    PROJECTS_ROOT / "новый проект"
+    if (PROJECTS_ROOT / "новый проект").exists()
+    else PROJECTS_ROOT
+)
+
+
+def _safe_workspace_root(raw_path: Optional[str]) -> Path:
+    workspace = Path(raw_path or DEFAULT_WORKSPACE).expanduser().resolve()
+    try:
+        workspace.relative_to(PROJECTS_ROOT)
+    except ValueError as exc:
+        raise HTTPException(400, f"Working directory must be inside {PROJECTS_ROOT}") from exc
+    if ".git" in workspace.parts:
+        raise HTTPException(400, "Working directory cannot be inside .git")
+    if not workspace.exists() or not workspace.is_dir():
+        raise HTTPException(400, f"Working directory does not exist: {workspace}")
+    return workspace
+
+
+def _lan_ips() -> List[str]:
+    ips = set()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            if not ipaddress.ip_address(ip).is_link_local:
+                ips.add(ip)
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            parsed = ipaddress.ip_address(ip)
+            if not parsed.is_loopback and not parsed.is_link_local:
+                ips.add(ip)
+    except OSError:
+        pass
+    return sorted(ips)
+
+
+async def _settings_with_defaults() -> Dict[str, Any]:
+    raw = await get_vault_config("app_settings")
+    defaults = {
+        "theme": "system",
+        "density": "comfortable",
+        "accent": "emerald",
+        "default_model": "qwen3:latest",
+        "command_mode": "safe-actions",
+        "working_directory": str(DEFAULT_WORKSPACE),
+    }
+    if raw:
+        try:
+            defaults.update(json.loads(raw))
+        except Exception:
+            pass
+    try:
+        defaults["working_directory"] = str(_safe_workspace_root(defaults.get("working_directory")))
+    except HTTPException:
+        defaults["working_directory"] = str(DEFAULT_WORKSPACE)
+    return defaults
+
+
 @app.get("/api/health")
 async def health():
     indexer = get_indexer()
     ollama_models = await ai_engine.list_ollama_models()
+    lan_ips = _lan_ips()
     return {
         "status": "ok",
         "vault_loaded": indexer is not None,
         "vault_path": str(indexer.vault_root) if indexer else None,
         "watcher_running": vault_watcher.is_running,
+        "network": {
+            "lan_ips": lan_ips,
+            "frontend_urls": [f"http://{ip}:5173" for ip in lan_ips],
+            "backend_urls": [f"http://{ip}:8765" for ip in lan_ips],
+            "recommended_phone_url": f"http://{lan_ips[0]}:5173" if lan_ips else None,
+        },
         "local_ai": {
             "provider": "ollama",
             "reachable": bool(ollama_models),
             "models": ollama_models,
-            "recommended": "qwen3:14b",
+            "recommended": "qwen3:latest",
+            "large_option": "qwen3:14b",
             "installed_fallback": "llama3:latest",
         },
         "timestamp": int(time.time()),
@@ -273,17 +361,19 @@ async def health():
 
 @app.get("/api/auth/status")
 async def auth_status():
+    lan_ips = _lan_ips()
     return {
         "lan_auth_required": True,
         "localhost_bypass": True,
         "token_fingerprint": token_fingerprint(),
         "header": "X-ObsidianAI-Token",
+        "phone_url": f"http://{lan_ips[0]}:5173" if lan_ips else None,
     }
 
 
 @app.get("/api/auth/local-token")
 async def local_token(request: Request):
-    if not is_loopback_host(request.client.host if request.client else None):
+    if not is_loopback_host(_client_host(request)):
         raise HTTPException(403, "Token can only be revealed from localhost")
     return {
         "token": read_auth_token(),
@@ -293,35 +383,60 @@ async def local_token(request: Request):
 
 @app.get("/api/settings")
 async def app_settings():
-    raw = await get_vault_config("app_settings")
-    defaults = {
-        "theme": "system",
-        "density": "comfortable",
-        "accent": "emerald",
-        "default_model": "llama3:latest",
-        "command_mode": "safe-actions",
-    }
-    if raw:
-        try:
-            defaults.update(json.loads(raw))
-        except Exception:
-            pass
-    return defaults
+    return await _settings_with_defaults()
 
 
 @app.put("/api/settings")
 async def save_app_settings(req: AppSettingsRequest):
     current = await app_settings()
     incoming = {k: v for k, v in req.model_dump().items() if v is not None}
+    if "working_directory" in incoming:
+        incoming["working_directory"] = str(_safe_workspace_root(incoming["working_directory"]))
     current.update(incoming)
     await save_vault_config("app_settings", json.dumps(current, ensure_ascii=False))
     return current
 
 
+@app.get("/api/workspaces")
+async def workspaces():
+    items = []
+    if PROJECTS_ROOT.exists():
+        for path in sorted(PROJECTS_ROOT.iterdir(), key=lambda item: item.name.lower()):
+            if not path.is_dir() or path.name.startswith(".") or path.name == "node_modules":
+                continue
+            resolved = path.resolve()
+            try:
+                resolved.relative_to(PROJECTS_ROOT)
+            except ValueError:
+                continue
+            markers = []
+            for filename, label in (
+                ("package.json", "Node"),
+                ("pyproject.toml", "Python"),
+                ("requirements.txt", "Python"),
+                ("pubspec.yaml", "Flutter"),
+                ("Cargo.toml", "Rust"),
+                ("docker-compose.yml", "Docker"),
+            ):
+                if (path / filename).exists():
+                    markers.append(label)
+            items.append({
+                "name": path.name,
+                "path": str(resolved),
+                "has_git": (path / ".git").exists(),
+                "markers": sorted(set(markers)),
+            })
+    return {
+        "root": str(PROJECTS_ROOT),
+        "active": (await app_settings()).get("working_directory"),
+        "workspaces": items,
+    }
+
+
 @app.post("/api/config/vault")
 async def setup_vault(req: VaultSetupRequest, background_tasks: BackgroundTasks):
     """Set vault path and trigger full index."""
-    vault_path = Path(req.vault_path).expanduser().resolve()
+    vault_path = Path(req.vault_path).expanduser().absolute()
     if not vault_path.exists():
         raise HTTPException(400, f"Path does not exist: {vault_path}")
 
@@ -358,9 +473,10 @@ async def get_ollama_models():
     models = await ai_engine.list_ollama_models()
     return {
         "models": models,
-        "recommended": "qwen3:14b",
+        "recommended": "qwen3:latest",
+        "large_option": "qwen3:14b",
         "fallback": "llama3:latest",
-        "install_hint": "ollama pull qwen3:14b",
+        "install_hint": "ollama pull qwen3",
     }
 
 
@@ -397,9 +513,6 @@ async def vault_stats():
 
 
 def _current_vault_root() -> Path:
-    indexer = get_indexer()
-    if indexer:
-        return indexer.vault_root
     return Path("/Users/justalim/projects/obsidian-vault")
 
 
@@ -523,9 +636,12 @@ async def rename_note(req: RenameNoteRequest):
 async def create_action(req: ActionProposalRequest):
     indexer = get_indexer()
     try:
+        payload = dict(req.payload)
+        if req.action_type == "write_file" and not payload.get("working_directory"):
+            payload["working_directory"] = (await app_settings()).get("working_directory")
         action = await propose_action(
             req.action_type,
-            req.payload,
+            payload,
             indexer=indexer,
             title=req.title,
             summary=req.summary,
@@ -579,12 +695,15 @@ async def ai_action_proposal(req: AIActionRequest):
     if not indexer:
         raise HTTPException(400, "Vault not configured")
     try:
+        settings = await app_settings()
+        workspace_root = _safe_workspace_root(req.working_directory or settings.get("working_directory"))
         result = await propose_ai_actions(
             req.goal,
             indexer,
             provider=req.provider,
             model=req.model,
             max_actions=req.max_actions,
+            working_directory=workspace_root,
         )
         return {"status": "pending_approval", **result}
     except Exception as exc:
@@ -683,15 +802,21 @@ async def chat_stream(req: ChatRequest):
     """Server-Sent Events streaming chat endpoint."""
     indexer = get_indexer()
     vault_context = ""
+    settings = await app_settings()
+    workspace_root = _safe_workspace_root(req.working_directory or settings.get("working_directory"))
 
     if req.include_vault_context and indexer:
         stats = await get_vault_stats()
         recent = await get_all_notes(limit=10)
         vault_context = f"""
 Vault: {str(indexer.vault_root)}
+Active working directory: {workspace_root}
 Total notes: {stats.get('total_notes', 0)}
 Total words: {stats.get('total_words', 0)}
 Recent notes: {', '.join([n.get('title','') for n in recent[:5]])}
+
+Workspace rule: any file work must stay inside Active working directory.
+If a task targets another project, ask the user to switch workspace first.
 """
 
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
@@ -710,7 +835,7 @@ Recent notes: {', '.join([n.get('title','') for n in recent[:5]])}
 
 
 @app.get("/api/ai/daily-brief")
-async def daily_brief(provider: str = "ollama", model: str = "llama3:latest"):
+async def daily_brief(provider: str = "ollama", model: str = "qwen3:latest"):
     stats = await get_vault_stats()
     recent = await get_all_notes(limit=5)
     brief = await ai_engine.generate_daily_brief(stats, recent, provider, model)

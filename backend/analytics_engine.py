@@ -62,7 +62,7 @@ async def build_overview(vault_root: Path) -> Dict[str, Any]:
                 "Map missing project paths in wiki notes." if unmapped_projects else "",
                 "Review dirty git projects before starting large AI actions." if dirty_projects else "",
                 "Add links between orphan notes and project MOCs." if orphan_count else "",
-                "Install qwen3:14b for stronger local reasoning." ,
+                "Use qwen3:latest for stronger local reasoning.",
             ] if item
         ],
     }

@@ -34,10 +34,12 @@ Payload examples:
 - create_note: {"folder":"wiki","title":"new-note","content":"# Title\\n...","frontmatter":{"tags":["ai"]}}
 - append_note: {"path":"wiki/learning-log.md","content":"## 2026-05-12 – Insight\\n..."}
 - update_note: {"path":"wiki/project.md","content":"full markdown content"}
-- write_file: {"path":"/Users/justalim/projects/project/file.ext","content":"full file content"}
+- write_file: {"path":"relative/path/inside/active/workspace.ext","content":"full file content"}
 
 Rules:
 - Obsidian note paths are always vault-relative, for example "inbox/test.md" or "wiki/decisions.md".
+- File paths for write_file must stay inside the active working directory. Prefer relative paths.
+- If the requested target project is not the active working directory, ask for a workspace switch by creating an append_note plan instead of writing a file.
 - Prefer append_note for decisions, learning-log, daily notes and project updates.
 - Never modify CLAUDE.md or raw/.
 - Never claim changes are applied. They are pending approvals.
@@ -95,11 +97,20 @@ async def propose_ai_actions(
     goal: str,
     indexer: VaultIndexer,
     provider: str = "ollama",
-    model: str = "llama3:latest",
+    model: str = "qwen3:latest",
     max_actions: int = 5,
+    working_directory: Optional[Path] = None,
 ) -> Dict[str, Any]:
     context = _vault_digest(indexer.vault_root)
-    prompt = f"{ACTION_SCHEMA}\n\nVault context:\n{context}\n\nUser goal:\n{goal}"
+    workspace = working_directory.resolve() if working_directory else Path.home() / "projects"
+    prompt = (
+        f"{ACTION_SCHEMA}\n\n"
+        f"Active working directory:\n{workspace}\n\n"
+        f"Vault context:\n{context}\n\n"
+        "Important: any write_file action must be inside the active working directory. "
+        "Use relative paths whenever possible. Do not write elsewhere on the computer.\n\n"
+        f"User goal:\n{goal}"
+    )
     messages = [{"role": "user", "content": prompt}]
 
     result_text = ""
@@ -118,6 +129,9 @@ async def propose_ai_actions(
     errors: List[Dict[str, str]] = []
     for raw in raw_actions[:max_actions]:
         try:
+            if raw.get("action_type") == "write_file":
+                payload = raw.setdefault("payload", {})
+                payload["working_directory"] = str(workspace)
             action = await propose_action(
                 raw["action_type"],
                 raw.get("payload", {}),

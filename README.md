@@ -31,6 +31,12 @@ Or run both:
 ./scripts/start_dev.sh
 ```
 
+Desktop shell:
+
+```bash
+npm run desktop
+```
+
 Install macOS autostart agents for backend, frontend, and mobile bridge:
 
 ```bash
@@ -41,6 +47,8 @@ Open:
 
 - Desktop: `http://localhost:5173`
 - Phone on same Wi-Fi: `http://<mac-local-ip>:5173`
+
+Full usage guide: [docs/USAGE.md](docs/USAGE.md).
 
 ## Configure Vault
 
@@ -54,17 +62,20 @@ You can also save it from the Settings screen.
 
 ## Local AI
 
-Current installed fallback:
+Recommended local model:
 
 ```bash
-ollama run llama3:latest
+ollama pull qwen3
+ollama run qwen3
 ```
 
-Recommended larger local model:
+Optional larger model:
 
 ```bash
 ollama pull qwen3:14b
 ```
+
+The default model in the app is `qwen3:latest`.
 
 ## LAN Security
 
@@ -75,7 +86,13 @@ The token is generated at:
 data/auth-token.txt
 ```
 
-Open Settings in the web UI to save the token on the phone.
+The web app now proxies `/api` through port `5173`, so a phone usually needs only
+`http://<mac-local-ip>:5173`. Open Settings in the web UI to save the token on the phone.
+
+## Active Workspace
+
+Before asking the AI to edit project files, choose `Active Workspace` in the Command screen.
+All `write_file` actions are restricted to that selected directory and still wait for approval.
 
 ## Mobile Bridge
 

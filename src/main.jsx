@@ -9,6 +9,7 @@ import {
   Clock3,
   Database,
   FileSearch,
+  FolderOpen,
   FolderKanban,
   GitBranch,
   Inbox,
@@ -26,14 +27,17 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Smartphone,
   WandSparkles,
+  WifiOff,
   X,
 } from "lucide-react";
 import "./styles.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE || `${window.location.protocol}//${window.location.hostname}:8765`;
+const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE || (window.location.protocol.startsWith("http") ? "" : "http://127.0.0.1:8765");
 const DEFAULT_VAULT = "/Users/justalim/projects/obsidian-vault";
 const AUTH_TOKEN_KEY = "obsidian_ai_token";
+const API_BASE_KEY = "obsidian_ai_api_base";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -59,9 +63,26 @@ function formatTime(epoch) {
   });
 }
 
+function getApiBase() {
+  return localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE;
+}
+
+function setApiBase(value) {
+  const clean = value.trim().replace(/\/$/, "");
+  if (clean) {
+    localStorage.setItem(API_BASE_KEY, clean);
+  } else {
+    localStorage.removeItem(API_BASE_KEY);
+  }
+}
+
+function apiUrl(path) {
+  return `${getApiBase()}${path}`;
+}
+
 async function api(path, options = {}) {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(apiUrl(path), {
     headers: {
       "Content-Type": "application/json",
       ...(token ? { "X-ObsidianAI-Token": token } : {}),
@@ -145,10 +166,16 @@ function Header({ health, refreshAll }) {
 
 function AccessPanel({ authStatus, onSave }) {
   const [token, setToken] = useState("");
+  const [error, setError] = useState("");
 
   async function loadLocalToken() {
-    const data = await api("/api/auth/local-token");
-    setToken(data.token);
+    try {
+      const data = await api("/api/auth/local-token");
+      setToken(data.token);
+      setError("");
+    } catch {
+      setError("Токен можно показать только с Mac на localhost. На телефоне вставь токен из файла data/auth-token.txt или из настроек на Mac.");
+    }
   }
 
   return (
@@ -162,6 +189,12 @@ function AccessPanel({ authStatus, onSave }) {
           Для доступа с телефона нужен локальный токен. На Mac его можно получить
           автоматически, а на телефоне вставить один раз.
         </p>
+        {authStatus?.phone_url && (
+          <div className="phone-hint">
+            <Smartphone size={16} />
+            <span>{authStatus.phone_url}</span>
+          </div>
+        )}
         <div className="settings-list">
           <div>
             <span>Fingerprint</span>
@@ -184,6 +217,64 @@ function AccessPanel({ authStatus, onSave }) {
           <button className="ghost" onClick={loadLocalToken}>
             <ShieldCheck size={16} />
             Load on Mac
+          </button>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+      </div>
+    </section>
+  );
+}
+
+function ConnectionPanel({ error, onRetry }) {
+  const [base, setBase] = useState(getApiBase());
+
+  async function saveAndRetry() {
+    setApiBase(base);
+    try {
+      await onRetry();
+    } catch {
+      /* refreshAll stores the visible connection error */
+    }
+  }
+
+  return (
+    <section className="access-shell">
+      <div className="access-card">
+        <div className="brand-mark">
+          <WifiOff size={20} />
+        </div>
+        <h1>Backend connection</h1>
+        <p>
+          Веб-интерфейс открыт, но API сейчас недоступен. Для телефона основной
+          режим — открыть веб на Mac IP и оставить поле ниже пустым: тогда `/api`
+          пройдет через безопасный proxy на порт 5173.
+        </p>
+        <label className="token-input">
+          API base override
+          <input
+            value={base}
+            onChange={(event) => setBase(event.target.value)}
+            placeholder="Пусто = /api через веб-порт, либо http://192.168.0.219:8765"
+          />
+        </label>
+        <div className="settings-list">
+          <div>
+            <span>Current mode</span>
+            <strong>{getApiBase() || "same-origin /api proxy"}</strong>
+          </div>
+          <div>
+            <span>Error</span>
+            <code>{error || "Network request failed"}</code>
+          </div>
+        </div>
+        <div className="button-row">
+          <button onClick={saveAndRetry}>
+            <RefreshCcw size={16} />
+            Retry
+          </button>
+          <button className="ghost" onClick={async () => { setBase(""); setApiBase(""); try { await onRetry(); } catch {} }}>
+            <Network size={16} />
+            Use proxy
           </button>
         </div>
       </div>
@@ -225,7 +316,7 @@ function Dashboard({ stats, health, notes, actions, overview, runIndex }) {
           </div>
           <div>
             <span>Local model</span>
-            <strong>{health?.local_ai?.models?.[0] || "llama3:latest"}</strong>
+            <strong>{health?.local_ai?.models?.[0] || "qwen3:latest"}</strong>
           </div>
         </div>
       </div>
@@ -278,14 +369,19 @@ function Dashboard({ stats, health, notes, actions, overview, runIndex }) {
   );
 }
 
-function CommandCenter({ actions, refreshAll, settings }) {
+function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces }) {
   const [messages, setMessages] = useState([
     { role: "assistant", content: "Готов. Я отвечаю с учетом vault и создаю изменения только через очередь подтверждений." },
   ]);
   const [input, setInput] = useState("");
   const [remoteTask, setRemoteTask] = useState("");
   const [mode, setMode] = useState("chat");
+  const [workspace, setWorkspace] = useState(settings?.working_directory || "");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setWorkspace(settings?.working_directory || "");
+  }, [settings?.working_directory]);
 
   async function sendChat() {
     const text = input.trim();
@@ -301,8 +397,9 @@ function CommandCenter({ actions, refreshAll, settings }) {
           body: JSON.stringify({
             goal: text,
             provider: "ollama",
-            model: settings?.default_model || "llama3:latest",
+            model: settings?.default_model || "qwen3:latest",
             max_actions: 5,
+            working_directory: workspace,
           }),
         });
         const actionText = [
@@ -319,7 +416,7 @@ function CommandCenter({ actions, refreshAll, settings }) {
         return;
       }
 
-      const res = await fetch(`${API_BASE}/api/ai/chat/stream`, {
+      const res = await fetch(apiUrl("/api/ai/chat/stream"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -329,11 +426,15 @@ function CommandCenter({ actions, refreshAll, settings }) {
         },
         body: JSON.stringify({
           provider: "ollama",
-          model: settings?.default_model || "llama3:latest",
+          model: settings?.default_model || "qwen3:latest",
           messages: next.filter((m) => m.content).map((m) => ({ role: m.role, content: m.content })),
           include_vault_context: true,
+          working_directory: workspace,
         }),
       });
+      if (!res.ok || !res.body) {
+        throw new Error(`${res.status} ${await res.text()}`);
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let assistantText = "";
@@ -354,6 +455,12 @@ function CommandCenter({ actions, refreshAll, settings }) {
           });
         }
       }
+    } catch (error) {
+      setMessages((current) => {
+        const copy = [...current];
+        copy[copy.length - 1] = { role: "assistant", content: `Ошибка: ${error.message || error}` };
+        return copy;
+      });
     } finally {
       setBusy(false);
     }
@@ -367,6 +474,10 @@ function CommandCenter({ actions, refreshAll, settings }) {
       body: JSON.stringify({ task }),
     });
     setRemoteTask("");
+  }
+
+  async function saveWorkspace() {
+    await saveSettings({ ...settings, working_directory: workspace });
   }
 
   return (
@@ -411,6 +522,36 @@ function CommandCenter({ actions, refreshAll, settings }) {
       </div>
 
       <div className="side-stack">
+        <div className="panel workspace-panel">
+          <div className="panel-head compact">
+            <h2>Active Workspace</h2>
+            <FolderOpen size={18} />
+          </div>
+          <div className="form-stack">
+            <label>
+              Directory
+              <select
+                value={workspace}
+                onChange={(event) => setWorkspace(event.target.value)}
+              >
+                {workspaces.map((item) => (
+                  <option value={item.path} key={item.path}>
+                    {item.name}{item.markers?.length ? ` · ${item.markers.join(", ")}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Custom path
+              <input value={workspace} onChange={(event) => setWorkspace(event.target.value)} />
+            </label>
+            <button onClick={saveWorkspace}>
+              <SlidersHorizontal size={16} />
+              Save workspace
+            </button>
+            <p className="muted path-hint">{workspace || "No workspace selected"}</p>
+          </div>
+        </div>
         <div className="panel">
           <div className="panel-head compact">
             <h2>Mobile Inbox</h2>
@@ -702,7 +843,7 @@ function AnalyticsView({ stats, hubs, orphans, actions, refreshAll }) {
   );
 }
 
-function SettingsView({ health, settings, authStatus, setupVault, runIndex, saveSettings }) {
+function SettingsView({ health, settings, authStatus, setupVault, runIndex, saveSettings, workspaces }) {
   const [vaultPath, setVaultPath] = useState(health?.vault_path || DEFAULT_VAULT);
   const [draft, setDraft] = useState(settings);
   useEffect(() => {
@@ -776,7 +917,21 @@ function SettingsView({ health, settings, authStatus, setupVault, runIndex, save
           </label>
           <label>
             Default local model
-            <input value={draft.default_model || "llama3:latest"} onChange={(event) => updateDraft("default_model", event.target.value)} />
+            <input value={draft.default_model || "qwen3:latest"} onChange={(event) => updateDraft("default_model", event.target.value)} />
+          </label>
+          <label>
+            Working directory
+            <select value={draft.working_directory || ""} onChange={(event) => updateDraft("working_directory", event.target.value)}>
+              {workspaces.map((item) => (
+                <option value={item.path} key={item.path}>
+                  {item.name}{item.has_git ? " · git" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Custom working directory
+            <input value={draft.working_directory || ""} onChange={(event) => updateDraft("working_directory", event.target.value)} />
           </label>
           <button onClick={() => saveSettings(draft)}>
             <SlidersHorizontal size={16} />
@@ -795,11 +950,15 @@ function SettingsView({ health, settings, authStatus, setupVault, runIndex, save
           </div>
           <div>
             <span>Recommended</span>
-            <strong>qwen3:14b</strong>
+            <strong>qwen3:latest</strong>
           </div>
           <div>
             <span>Install</span>
-            <code>ollama pull qwen3:14b</code>
+            <code>ollama pull qwen3</code>
+          </div>
+          <div>
+            <span>Active workspace</span>
+            <code>{settings?.working_directory || "not selected"}</code>
           </div>
           <div>
             <span>LAN token</span>
@@ -824,7 +983,8 @@ function App() {
     theme: "system",
     density: "comfortable",
     accent: "emerald",
-    default_model: "llama3:latest",
+    default_model: "qwen3:latest",
+    working_directory: "/Users/justalim/projects/новый проект",
   });
   const [overview, setOverview] = useState(null);
   const [stats, setStats] = useState(null);
@@ -832,6 +992,7 @@ function App() {
   const [actions, setActions] = useState([]);
   const [projects, setProjects] = useState([]);
   const [projectTasks, setProjectTasks] = useState([]);
+  const [workspaces, setWorkspaces] = useState([]);
   const [hubs, setHubs] = useState([]);
   const [orphans, setOrphans] = useState([]);
   const [query, setQuery] = useState("");
@@ -839,17 +1000,26 @@ function App() {
   const [ragResults, setRagResults] = useState([]);
   const [selectedNote, setSelectedNote] = useState(null);
   const [toast, setToast] = useState("");
+  const [connectionError, setConnectionError] = useState("");
 
   async function refreshAll() {
-    const [healthData, authData] = await Promise.all([
-      api("/api/health"),
-      api("/api/auth/status"),
-    ]);
+    let healthData;
+    let authData;
+    try {
+      [healthData, authData] = await Promise.all([
+        api("/api/health"),
+        api("/api/auth/status"),
+      ]);
+    } catch (error) {
+      setConnectionError(error.message || String(error));
+      throw error;
+    }
+    setConnectionError("");
     setHealth(healthData);
     setAuthStatus(authData);
 
     try {
-      const [settingsData, statsData, notesData, actionsData, projectsData, tasksData, overviewData] = await Promise.all([
+      const [settingsData, statsData, notesData, actionsData, projectsData, tasksData, overviewData, workspacesData] = await Promise.all([
         api("/api/settings"),
         api("/api/vault/stats"),
         api("/api/notes?limit=200"),
@@ -857,6 +1027,7 @@ function App() {
         api("/api/projects"),
         api("/api/projects/tasks"),
         api("/api/analytics/overview"),
+        api("/api/workspaces"),
       ]);
       setSettings(settingsData);
       setStats(statsData);
@@ -865,6 +1036,7 @@ function App() {
       setProjects(projectsData.projects || []);
       setProjectTasks(tasksData.tasks || []);
       setOverview(overviewData);
+      setWorkspaces(workspacesData.workspaces || []);
       setAuthLocked(false);
     } catch (error) {
       if (String(error.message || error).includes("401")) {
@@ -945,11 +1117,21 @@ function App() {
   function saveToken(token) {
     localStorage.setItem(AUTH_TOKEN_KEY, token.trim());
     setAuthLocked(false);
-    refreshAll();
+    refreshAll().catch((error) => setToast(error.message || "Token saved, retry failed."));
   }
 
   const view = useMemo(() => {
-    if (active === "command") return <CommandCenter actions={actions} refreshAll={refreshAll} settings={settings} />;
+    if (active === "command") {
+      return (
+        <CommandCenter
+          actions={actions}
+          refreshAll={refreshAll}
+          settings={settings}
+          saveSettings={saveSettings}
+          workspaces={workspaces}
+        />
+      );
+    }
     if (active === "vault") {
       return (
         <VaultView
@@ -978,11 +1160,16 @@ function App() {
           setupVault={setupVault}
           runIndex={runIndex}
           saveSettings={saveSettings}
+          workspaces={workspaces}
         />
       );
     }
     return <Dashboard stats={stats} health={health} notes={notes} actions={actions} overview={overview} runIndex={runIndex} />;
-  }, [active, actions, authStatus, health, hubs, notes, orphans, overview, projectTasks, projects, query, ragResults, searchResults, selectedNote, settings, stats]);
+  }, [active, actions, authStatus, health, hubs, notes, orphans, overview, projectTasks, projects, query, ragResults, searchResults, selectedNote, settings, stats, workspaces]);
+
+  if (connectionError && !health) {
+    return <ConnectionPanel error={connectionError} onRetry={refreshAll} />;
+  }
 
   if (authLocked) {
     return <AccessPanel authStatus={authStatus} onSave={saveToken} />;

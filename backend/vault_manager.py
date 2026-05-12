@@ -136,7 +136,7 @@ def parse_note(file_path: Path, vault_root: Path) -> Dict[str, Any]:
 
 class VaultIndexer:
     def __init__(self, vault_path: str):
-        self.vault_root = Path(vault_path).expanduser().resolve()
+        self.vault_root = Path(vault_path).expanduser().absolute()
         self.notes_cache: Dict[str, Dict] = {}
         self.graph: nx.DiGraph = nx.DiGraph()
 
@@ -151,13 +151,9 @@ class VaultIndexer:
 
     def _safe_path(self, relative_path: str) -> Path:
         rel = Path(relative_path)
-        if rel.is_absolute():
-            raise ValueError("Vault paths must be relative, not absolute")
-        full_path = (self.vault_root / rel).resolve()
-        try:
-            full_path.relative_to(self.vault_root)
-        except ValueError as exc:
-            raise ValueError("Path escapes the configured vault") from exc
+        if rel.is_absolute() or ".." in rel.parts:
+            raise ValueError("Vault paths must stay inside the configured vault")
+        full_path = self.vault_root / rel
         return full_path
 
     def _ensure_writable(self, relative_path: str):
@@ -382,8 +378,6 @@ class VaultIndexer:
         old_full = self._safe_path(old_path)
         clean_name = sanitize_note_filename(new_name)
         new_full = old_full.parent / (clean_name if clean_name.endswith(".md") else clean_name + ".md")
-        new_full = new_full.resolve()
-        new_full.relative_to(self.vault_root)
         old_full.rename(new_full)
         return str(new_full.relative_to(self.vault_root))
 

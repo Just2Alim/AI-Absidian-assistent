@@ -42,12 +42,13 @@ PROVIDERS = {
     },
     "ollama": {
         "models": [
+            "qwen3:latest",
             "qwen3:14b",
             "qwen3:8b",
             "llama3.1:8b",
             "llama3:latest",
         ],
-        "default": "llama3:latest",
+        "default": "qwen3:latest",
         "base_url": "http://127.0.0.1:11434",
     }
 }
@@ -64,6 +65,7 @@ You have full access to the user's Obsidian vault. Your capabilities:
 - **ANALYZE**: Find connections between ideas, detect orphan notes, suggest links
 - **PLAN**: Break down projects into tasks, create roadmaps, estimate timelines
 - **SUMMARIZE**: Distill long notes, create MOC (Maps of Content), daily briefings
+- **WORKSPACE-SAFE**: Never choose a random filesystem directory. Use the active working directory from context for file work, and ask for a workspace switch when the target project is different.
 
 ## Your personality:
 - Proactive: anticipate what the user needs next

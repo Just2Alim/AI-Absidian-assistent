@@ -28,7 +28,23 @@ QUOTE_RE = re.compile(r"^>\s+(.+)$", re.MULTILINE)
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
+    candidates = [path]
+    parts = list(path.parts)
+    if "obsidian-vault" in parts:
+        index = parts.index("obsidian-vault")
+        rel = Path(*parts[index + 1:]) if index + 1 < len(parts) else Path()
+        fallback = PROJECTS_ROOT / "obsidian-vault" / rel
+        if fallback != path:
+            candidates.append(fallback)
+
+    for candidate in candidates:
+        try:
+            return candidate.read_text(encoding="utf-8", errors="ignore")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+    return ""
 
 
 def _clean_cell(value: str) -> str:

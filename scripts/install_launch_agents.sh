@@ -4,7 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 LOG_DIR="$ROOT/data/logs"
+NPM_BIN="$(command -v npm || true)"
 mkdir -p "$PLIST_DIR" "$LOG_DIR"
+
+if [ -z "$NPM_BIN" ]; then
+  echo "npm was not found in PATH. Install Node.js or add npm to PATH first." >&2
+  exit 1
+fi
 
 if [ ! -d "$ROOT/.venv" ]; then
   python3 -m venv "$ROOT/.venv"
@@ -49,11 +55,14 @@ cat > "$PLIST_DIR/com.justalim.obsidianai.frontend.plist" <<PLIST
   <key>WorkingDirectory</key><string>$ROOT</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/env</string>
-    <string>npm</string>
+    <string>$NPM_BIN</string>
     <string>run</string>
     <string>dev</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>$LOG_DIR/launch-frontend.log</string>

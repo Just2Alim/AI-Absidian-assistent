@@ -40,12 +40,33 @@ def _unified_diff(old: str, new: str, fromfile: str, tofile: str) -> str:
     return "\n".join(diff) + ("\n" if diff else "")
 
 
-def _safe_project_path(path: str) -> Path:
-    resolved = Path(path).expanduser().resolve()
+def _safe_workspace_root(path: Optional[str] = None) -> Path:
+    root = Path(path).expanduser().resolve() if path else PROJECTS_ROOT
+    try:
+        root.relative_to(PROJECTS_ROOT)
+    except ValueError as exc:
+        raise ValueError(f"Workspace must be inside {PROJECTS_ROOT}") from exc
+    if ".git" in root.parts:
+        raise PermissionError("Workspaces inside .git are not allowed")
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"Workspace does not exist: {root}")
+    return root
+
+
+def _safe_project_path(path: str, workspace_root: Optional[str] = None) -> Path:
+    workspace = _safe_workspace_root(workspace_root)
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    resolved = candidate.resolve()
     try:
         resolved.relative_to(PROJECTS_ROOT)
     except ValueError as exc:
         raise ValueError(f"File actions are limited to {PROJECTS_ROOT}") from exc
+    try:
+        resolved.relative_to(workspace)
+    except ValueError as exc:
+        raise ValueError(f"File actions are limited to selected workspace: {workspace}") from exc
     if ".git" in resolved.parts:
         raise PermissionError("Direct writes inside .git are not allowed")
     return resolved
@@ -142,7 +163,8 @@ async def propose_action(
         summary = summary or "Rename a note file after approval."
 
     elif action_type == "write_file":
-        path = _safe_project_path(payload["path"])
+        workspace_root = payload.get("working_directory") or payload.get("workspace_root")
+        path = _safe_project_path(payload["path"], workspace_root)
         old_content = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
         new_content = payload.get("content", "")
         fromfile = str(path) if path.exists() else "/dev/null"
@@ -150,6 +172,7 @@ async def propose_action(
         title = title or f"Write file: {path}"
         summary = summary or "Create or replace a project file after approval."
         payload["path"] = str(path)
+        payload["working_directory"] = str(_safe_workspace_root(workspace_root))
 
     else:
         raise ValueError(f"Unsupported action type: {action_type}")
@@ -221,7 +244,7 @@ async def approve_action(action_id: str, indexer: Optional[VaultIndexer]) -> Dic
             result = {"old_path": payload["old_path"], "new_path": new_path, "backup": backup}
 
         elif action_type == "write_file":
-            path = _safe_project_path(payload["path"])
+            path = _safe_project_path(payload["path"], payload.get("working_directory"))
             backup = _backup_project_file(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(payload.get("content", ""), encoding="utf-8")
