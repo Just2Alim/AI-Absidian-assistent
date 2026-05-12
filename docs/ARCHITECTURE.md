@@ -145,9 +145,32 @@ Protected areas:
 
 ### Phase 5: Agent OS
 
-- Multi-step project execution plans
+- Multi-step project execution plans ✅
 - Test runner integration
+- Controlled local learning memory ✅
+- Project health and safe verification command registry ✅
 - PR/commit assistant
 - Obsidian canvas generation
 - Local memory and preferences
 - Plugin system for new tools
+
+## Agent OS Runtime
+
+The Agent OS layer stores each substantial request as an `execution_session`.
+The planner creates an `execution_plan` with ordered `execution_plan_steps`.
+Each step keeps objective, expected result, target files, checks, risks and approval state.
+
+Safe command execution is intentionally narrow. The backend only runs allowlisted
+verification commands such as `npm run build`, `python -m unittest`, `cargo check`
+or `flutter analyze`, and it stores output in `command_runs`.
+
+## Controlled Learning Model
+
+Learning memory lives in `learning_items` and is user-governed:
+
+- `review` mode keeps new memories pending until Lim activates them.
+- `active` memory is included in chat and planning context.
+- archived memory is retained for audit but excluded from prompts.
+
+This gives the assistant a way to become more useful over time without silently changing
+its behavior behind the user's back.

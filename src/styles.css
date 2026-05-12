@@ -814,6 +814,26 @@ select:focus {
   line-height: 1.35;
 }
 
+.command-chip-row {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.command-chip-row span,
+.command-chip-button {
+  min-height: 30px !important;
+  border-radius: 999px !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px !important;
+  background: var(--surface-soft) !important;
+  color: var(--accent-strong) !important;
+  font-size: 12px;
+  font-weight: 760;
+}
+
 .tree-preview {
   border-radius: 8px;
   background: var(--surface-soft);
@@ -833,6 +853,131 @@ select:focus {
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.plans-layout,
+.learning-layout {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.plan-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.36fr);
+  gap: 14px;
+}
+
+.plans-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+}
+
+.plan-card {
+  display: grid;
+  gap: 12px;
+}
+
+.plan-meta {
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.step-list {
+  display: grid;
+  gap: 10px;
+}
+
+.step-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.step-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.step-head span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.step-card p,
+.step-card small {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.commands-list,
+.memory-list {
+  display: grid;
+  gap: 9px;
+}
+
+.commands-list div {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.commands-list span,
+.memory-item span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.memory-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.memory-item strong,
+.memory-item span {
+  display: block;
+}
+
+.memory-item p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.checkbox-line {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 9px !important;
+}
+
+.checkbox-line input {
+  width: 17px;
+  min-height: 17px;
+  padding: 0;
 }
 
 .vault-list-panel {
@@ -1057,7 +1202,10 @@ select:focus {
   .dashboard-grid,
   .analytics-layout,
   .projects-layout,
-  .projects-grid {
+  .projects-grid,
+  .plans-layout,
+  .learning-layout,
+  .plan-composer {
     grid-template-columns: 1fr;
   }
 
@@ -1197,7 +1345,8 @@ select:focus {
   .project-meta,
   .tasks-table div,
   .project-detail-grid,
-  .context-grid {
+  .context-grid,
+  .commands-list div {
     grid-template-columns: 1fr;
   }
 

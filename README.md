@@ -140,6 +140,46 @@ It summarizes the mapped vault project, runtime markers, package scripts, git st
 important files, top-level tree, risks, and instructions. Chat prompts now include this
 pack automatically, so the AI answers with stronger awareness of the selected directory.
 
+## Agent OS Plans
+
+Large work should start as an execution plan:
+
+```text
+POST /api/plans/propose
+GET  /api/plans
+POST /api/plans/{plan_id}/approve
+POST /api/plans/steps/{step_id}/approved
+```
+
+Plans are stored in SQLite with sessions, steps, risks, files and verification checks.
+The UI exposes them in the `Plans` tab and also through the `Plan` mode in Command Center.
+
+## Controlled Learning
+
+The assistant has local learning memory:
+
+```text
+GET  /api/learning/items
+POST /api/learning/items
+POST /api/learning/feedback
+PUT  /api/learning/settings
+```
+
+Learning is controlled by the user. In `review` mode, new memories stay pending until
+activated from the Learning screen. Active memory is injected into chat and planning context.
+
+## Project Health and Checks
+
+Project health detects repository hygiene and safe verification commands:
+
+```text
+GET  /api/projects/health?path=/Users/justalim/projects/новый проект
+POST /api/commands/propose
+POST /api/commands/{run_id}/run
+```
+
+Only allowlisted verification commands are runnable from the app.
+
 ## AI Action Engine
 
 Natural language goals can become reviewable pending actions:

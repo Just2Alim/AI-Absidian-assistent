@@ -4,8 +4,10 @@ import {
   Activity,
   BarChart3,
   Bot,
+  Brain,
   Check,
   CircleDot,
+  ClipboardList,
   Clock3,
   Database,
   FileSearch,
@@ -29,6 +31,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Smartphone,
+  Terminal,
   WandSparkles,
   WifiOff,
   X,
@@ -43,9 +46,11 @@ const API_BASE_KEY = "obsidian_ai_api_base";
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "command", label: "Command", icon: Bot },
+  { id: "plans", label: "Plans", icon: ClipboardList },
   { id: "projects", label: "Projects", icon: FolderKanban },
   { id: "vault", label: "Vault", icon: FileSearch },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "learning", label: "Learning", icon: Brain },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -418,6 +423,7 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
   const [mode, setMode] = useState("chat");
   const [workspace, setWorkspace] = useState(settings?.working_directory || "");
   const [contextPack, setContextPack] = useState(null);
+  const [contextHealth, setContextHealth] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -432,9 +438,11 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
     api(`/api/context/workspace?path=${encodeURIComponent(workspace)}`, { timeoutMs: 20000 })
       .then((data) => {
         if (!cancelled) setContextPack(data.context_pack || null);
+        if (!cancelled) setContextHealth(data.health || null);
       })
       .catch(() => {
         if (!cancelled) setContextPack(null);
+        if (!cancelled) setContextHealth(null);
       })
       .finally(() => {
         if (!cancelled) setContextLoading(false);
@@ -473,6 +481,32 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
         setMessages((current) => {
           const copy = [...current];
           copy[copy.length - 1] = { role: "assistant", content: actionText };
+          return copy;
+        });
+        await refreshAll();
+        return;
+      }
+
+      if (mode === "plan") {
+        const data = await api("/api/plans/propose", {
+          method: "POST",
+          timeoutMs: 90000,
+          body: JSON.stringify({
+            goal: text,
+            provider: "ollama",
+            model: settings?.default_model || "qwen3:latest",
+            working_directory: workspace,
+          }),
+        });
+        const plan = data.plan;
+        const planText = [
+          `Создал execution plan: ${plan?.title || "Plan"}`,
+          plan?.summary || "",
+          ...(plan?.steps || []).map((step) => `- ${step.position}. ${step.title}`),
+        ].filter(Boolean).join("\n");
+        setMessages((current) => {
+          const copy = [...current];
+          copy[copy.length - 1] = { role: "assistant", content: planText };
           return copy;
         });
         await refreshAll();
@@ -564,6 +598,10 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
               <WandSparkles size={14} />
               Actions
             </button>
+            <button className={mode === "plan" ? "active" : ""} onClick={() => setMode("plan")}>
+              <ClipboardList size={14} />
+              Plan
+            </button>
           </div>
         </div>
         <div className="chat-log">
@@ -580,7 +618,7 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendChat();
             }}
-            placeholder={mode === "chat" ? "Спроси про vault, проект, план реализации..." : "Опиши действие: создать заметку, обновить проект, подготовить файл..."}
+            placeholder={mode === "chat" ? "Спроси про vault, проект, план реализации..." : mode === "plan" ? "Опиши большую задачу, чтобы ИИ сначала создал пошаговый план..." : "Опиши действие: создать заметку, обновить проект, подготовить файл..."}
           />
           <button onClick={sendChat} disabled={busy || !input.trim()} title="Отправить">
             <Send size={18} />
@@ -619,7 +657,7 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
             <p className="muted path-hint">{workspace || "No workspace selected"}</p>
           </div>
         </div>
-        <ContextPackCard contextPack={contextPack} loading={contextLoading} />
+        <ContextPackCard contextPack={contextPack} health={contextHealth} loading={contextLoading} />
         <div className="panel">
           <div className="panel-head compact">
             <h2>Mobile Inbox</h2>
@@ -642,7 +680,7 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
   );
 }
 
-function ContextPackCard({ contextPack, loading }) {
+function ContextPackCard({ contextPack, health, loading }) {
   const project = contextPack?.project;
   const runtime = contextPack?.runtime || {};
   const git = contextPack?.git || {};
@@ -671,6 +709,28 @@ function ContextPackCard({ contextPack, loading }) {
               <strong>{git.available ? `${git.branch || "repo"} · ${git.dirty || 0} changes` : git.reason || "unknown"}</strong>
             </div>
           </div>
+          {health && (
+            <div className="context-grid">
+              <div>
+                <span>Health</span>
+                <strong>{health.score}/100</strong>
+              </div>
+              <div>
+                <span>Checks</span>
+                <strong>{health.verification_commands?.length || 0} detected</strong>
+              </div>
+            </div>
+          )}
+          {!!health?.verification_commands?.length && (
+            <div className="command-chip-row">
+              {health.verification_commands.slice(0, 5).map((item) => (
+                <span key={item.command}>
+                  <Terminal size={13} />
+                  {item.command}
+                </span>
+              ))}
+            </div>
+          )}
           {!!runtime.scripts?.length && (
             <div className="signal-row compact">
               {runtime.scripts.slice(0, 8).map((script) => <span key={script}>{script}</span>)}
@@ -869,6 +929,373 @@ function ProjectsView({ projects, projectTasks }) {
               <span>{item.task}</span>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PlansView({ plans, commands, settings, workspaces, refreshAll }) {
+  const [goal, setGoal] = useState("");
+  const [workspace, setWorkspace] = useState(settings?.working_directory || "");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => setWorkspace(settings?.working_directory || ""), [settings?.working_directory]);
+
+  async function createPlan() {
+    const clean = goal.trim();
+    if (!clean || busy) return;
+    setBusy(true);
+    setMessage("Создаю план...");
+    try {
+      const data = await api("/api/plans/propose", {
+        method: "POST",
+        timeoutMs: 90000,
+        body: JSON.stringify({
+          goal: clean,
+          provider: "ollama",
+          model: settings?.default_model || "qwen3:latest",
+          working_directory: workspace,
+        }),
+      });
+      setGoal("");
+      setMessage(`План готов: ${data.plan?.title || "Execution plan"}`);
+      await refreshAll();
+    } catch (error) {
+      setMessage(error.message || String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setPlanStatus(planId, action) {
+    await api(`/api/plans/${planId}/${action}`, { method: "POST" });
+    await refreshAll();
+  }
+
+  async function setStepStatus(stepId, status) {
+    await api(`/api/plans/steps/${stepId}/${status}`, { method: "POST" });
+    await refreshAll();
+  }
+
+  async function runCheck(plan, step, command) {
+    const proposed = await api("/api/commands/propose", {
+      method: "POST",
+      body: JSON.stringify({
+        command,
+        working_directory: plan.workspace,
+        session_id: plan.session_id,
+        plan_id: plan.id,
+        step_id: step.id,
+      }),
+    });
+    await api(`/api/commands/${proposed.command.id}/run`, { method: "POST", timeoutMs: 130000 });
+    await refreshAll();
+  }
+
+  return (
+    <section className="view plans-layout">
+      <div className="panel wide">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Agent OS</p>
+            <h2>Execution Plans</h2>
+          </div>
+          <ClipboardList size={20} />
+        </div>
+        <div className="plan-composer">
+          <textarea
+            value={goal}
+            onChange={(event) => setGoal(event.target.value)}
+            placeholder="Большая задача: что нужно спланировать, проверить и выполнить через approval-first процесс"
+          />
+          <div className="form-stack">
+            <label>
+              Workspace
+              <select value={workspace} onChange={(event) => setWorkspace(event.target.value)}>
+                {workspaces.map((item) => (
+                  <option value={item.path} key={item.path}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+            <button onClick={createPlan} disabled={busy || !goal.trim()}>
+              <WandSparkles size={16} />
+              Create plan
+            </button>
+            {message && <p className="muted">{message}</p>}
+          </div>
+        </div>
+      </div>
+
+      <div className="plans-list">
+        {plans.map((plan) => (
+          <article className="panel plan-card" key={plan.id}>
+            <div className="panel-head">
+              <div>
+                <p className="eyebrow">{plan.status} · {plan.risk_level} risk</p>
+                <h2>{plan.title}</h2>
+              </div>
+              <span className="project-status">{plan.steps?.length || 0} steps</span>
+            </div>
+            <p className="project-summary">{plan.summary || plan.goal}</p>
+            <div className="plan-meta">
+              <span>{plan.workspace}</span>
+            </div>
+            <div className="decision-row">
+              <button onClick={() => setPlanStatus(plan.id, "approve")} disabled={plan.status === "approved"}>
+                <Check size={16} />
+                Approve plan
+              </button>
+              <button className="ghost danger" onClick={() => setPlanStatus(plan.id, "reject")} disabled={plan.status === "rejected"}>
+                <X size={16} />
+                Reject
+              </button>
+            </div>
+            <div className="step-list">
+              {(plan.steps || []).map((step) => (
+                <div className="step-card" key={step.id}>
+                  <div className="step-head">
+                    <strong>{step.position}. {step.title}</strong>
+                    <span>{step.status}</span>
+                  </div>
+                  <p>{step.objective || step.expected_result}</p>
+                  {!!step.files?.length && <small>Files: {step.files.join(", ")}</small>}
+                  {!!step.risks?.length && <small>Risks: {step.risks.join(", ")}</small>}
+                  <div className="decision-row">
+                    <button className="ghost" onClick={() => setStepStatus(step.id, "approved")}>
+                      <Check size={15} />
+                      Step approve
+                    </button>
+                    <button className="ghost" onClick={() => setStepStatus(step.id, "completed")}>
+                      <CircleDot size={15} />
+                      Complete
+                    </button>
+                    <button className="ghost danger" onClick={() => setStepStatus(step.id, "rejected")}>
+                      <X size={15} />
+                      Reject
+                    </button>
+                  </div>
+                  {!!step.checks?.length && (
+                    <div className="command-chip-row">
+                      {step.checks.map((check) => (
+                        <button className="ghost command-chip-button" key={check} onClick={() => runCheck(plan, step, check)}>
+                          <Terminal size={13} />
+                          {check}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </article>
+        ))}
+        {!plans.length && <div className="panel"><p className="muted">No execution plans yet.</p></div>}
+      </div>
+
+      <div className="panel wide">
+        <div className="panel-head compact">
+          <h2>Command Runs</h2>
+        </div>
+        <div className="commands-list">
+          {commands.slice(0, 10).map((item) => (
+            <div key={item.id}>
+              <Terminal size={15} />
+              <strong>{item.command}</strong>
+              <span>{item.status}{item.exit_code !== null && item.exit_code !== undefined ? ` · exit ${item.exit_code}` : ""}</span>
+            </div>
+          ))}
+          {!commands.length && <p className="muted">No command runs yet.</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LearningView({ learningItems, learningSettings, settings, refreshAll }) {
+  const [draft, setDraft] = useState({
+    kind: "preference",
+    title: "",
+    content: "",
+    scope: "global",
+  });
+  const [feedback, setFeedback] = useState("");
+  const [config, setConfig] = useState(learningSettings);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => setConfig(learningSettings), [learningSettings]);
+
+  function updateDraft(key, value) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  async function saveMemory() {
+    if (!draft.title.trim() || !draft.content.trim()) return;
+    await api("/api/learning/items", {
+      method: "POST",
+      body: JSON.stringify({
+        ...draft,
+        workspace: draft.scope === "workspace" ? settings?.working_directory : null,
+      }),
+    });
+    setDraft({ kind: "preference", title: "", content: "", scope: "global" });
+    setMessage("Memory saved for review.");
+    await refreshAll();
+  }
+
+  async function saveFeedback() {
+    if (!feedback.trim()) return;
+    await api("/api/learning/feedback", {
+      method: "POST",
+      body: JSON.stringify({
+        feedback,
+        title: "User correction",
+        workspace: settings?.working_directory,
+        rating: 1,
+      }),
+    });
+    setFeedback("");
+    setMessage("Feedback converted into learning memory.");
+    await refreshAll();
+  }
+
+  async function saveConfig() {
+    await api("/api/learning/settings", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    });
+    setMessage("Learning settings saved.");
+    await refreshAll();
+  }
+
+  async function itemAction(id, action) {
+    await api(`/api/learning/items/${id}/${action}`, { method: "POST" });
+    await refreshAll();
+  }
+
+  const active = learningItems.filter((item) => item.status === "active");
+  const pending = learningItems.filter((item) => item.status === "pending");
+
+  return (
+    <section className="view learning-layout">
+      <div className="metrics-row">
+        <StatTile icon={Brain} label="Active Memory" value={formatNumber(active.length)} />
+        <StatTile icon={Clock3} label="Review Queue" value={formatNumber(pending.length)} tone="amber" />
+        <StatTile icon={Database} label="All Items" value={formatNumber(learningItems.length)} tone="blue" />
+        <StatTile icon={ShieldCheck} label="Mode" value={config?.mode || "review"} tone="violet" />
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Controlled Learning</p>
+            <h2>Add Memory</h2>
+          </div>
+        </div>
+        <div className="form-stack">
+          <label>
+            Kind
+            <select value={draft.kind} onChange={(event) => updateDraft("kind", event.target.value)}>
+              <option value="preference">Preference</option>
+              <option value="correction">Correction</option>
+              <option value="pattern">Pattern</option>
+              <option value="decision">Decision</option>
+              <option value="project-note">Project note</option>
+            </select>
+          </label>
+          <label>
+            Scope
+            <select value={draft.scope} onChange={(event) => updateDraft("scope", event.target.value)}>
+              <option value="global">Global</option>
+              <option value="workspace">Current workspace</option>
+            </select>
+          </label>
+          <label>
+            Title
+            <input value={draft.title} onChange={(event) => updateDraft("title", event.target.value)} />
+          </label>
+          <label>
+            Content
+            <textarea value={draft.content} onChange={(event) => updateDraft("content", event.target.value)} />
+          </label>
+          <button onClick={saveMemory}>
+            <Brain size={16} />
+            Save memory
+          </button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Feedback</p>
+            <h2>Teach Assistant</h2>
+          </div>
+        </div>
+        <div className="form-stack">
+          <label>
+            Correction or instruction
+            <textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="Например: в моих Flutter проектах сначала всегда запускай flutter analyze" />
+          </label>
+          <button onClick={saveFeedback}>
+            <Sparkles size={16} />
+            Convert to memory
+          </button>
+          <div className="settings-list">
+            <div>
+              <span>Mode</span>
+              <select value={config?.mode || "review"} onChange={(event) => setConfig((current) => ({ ...current, mode: event.target.value }))}>
+                <option value="review">Review before active</option>
+                <option value="auto">Auto active</option>
+              </select>
+            </div>
+            <div>
+              <span>Max context items</span>
+              <input type="number" value={config?.max_context_items || 12} onChange={(event) => setConfig((current) => ({ ...current, max_context_items: Number(event.target.value) }))} />
+            </div>
+          </div>
+          <label className="checkbox-line">
+            <input type="checkbox" checked={!!config?.include_in_chat} onChange={(event) => setConfig((current) => ({ ...current, include_in_chat: event.target.checked }))} />
+            Include active memory in chat
+          </label>
+          <label className="checkbox-line">
+            <input type="checkbox" checked={!!config?.auto_promote_feedback} onChange={(event) => setConfig((current) => ({ ...current, auto_promote_feedback: event.target.checked }))} />
+            Auto-promote feedback
+          </label>
+          <button className="ghost" onClick={saveConfig}>
+            <SlidersHorizontal size={16} />
+            Save learning settings
+          </button>
+          {message && <p className="muted">{message}</p>}
+        </div>
+      </div>
+
+      <div className="panel wide">
+        <div className="panel-head compact">
+          <h2>Memory Items</h2>
+        </div>
+        <div className="memory-list">
+          {learningItems.map((item) => (
+            <div className="memory-item" key={item.id}>
+              <div>
+                <strong>{item.title}</strong>
+                <span>{item.kind} · {item.scope} · {item.status}</span>
+              </div>
+              <p>{item.content}</p>
+              <div className="decision-row">
+                <button className="ghost" onClick={() => itemAction(item.id, "activate")}>
+                  <Check size={15} />
+                  Activate
+                </button>
+                <button className="ghost danger" onClick={() => itemAction(item.id, "archive")}>
+                  <X size={15} />
+                  Archive
+                </button>
+              </div>
+            </div>
+          ))}
+          {!learningItems.length && <p className="muted">No learning memory yet.</p>}
         </div>
       </div>
     </section>
@@ -1107,6 +1534,16 @@ function App() {
   const [stats, setStats] = useState(null);
   const [notes, setNotes] = useState([]);
   const [actions, setActions] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [commands, setCommands] = useState([]);
+  const [learningItems, setLearningItems] = useState([]);
+  const [learningSettings, setLearningSettings] = useState({
+    mode: "review",
+    include_in_chat: true,
+    auto_promote_feedback: false,
+    max_context_items: 12,
+  });
   const [projects, setProjects] = useState([]);
   const [projectTasks, setProjectTasks] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
@@ -1136,7 +1573,21 @@ function App() {
     setAuthStatus(authData);
 
     try {
-      const [settingsData, statsData, notesData, actionsData, projectsData, tasksData, overviewData, workspacesData] = await Promise.all([
+      const [
+        settingsData,
+        statsData,
+        notesData,
+        actionsData,
+        projectsData,
+        tasksData,
+        overviewData,
+        workspacesData,
+        plansData,
+        sessionsData,
+        commandsData,
+        learningData,
+        learningSettingsData,
+      ] = await Promise.all([
         api("/api/settings"),
         api("/api/vault/stats"),
         api("/api/notes?limit=200"),
@@ -1145,11 +1596,21 @@ function App() {
         api("/api/projects/tasks"),
         api("/api/analytics/overview"),
         api("/api/workspaces"),
+        api("/api/plans?limit=30"),
+        api("/api/sessions?limit=30"),
+        api("/api/commands?limit=50"),
+        api("/api/learning/items?limit=100"),
+        api("/api/learning/settings"),
       ]);
       setSettings(settingsData);
       setStats(statsData);
       setNotes(notesData.notes || []);
       setActions(actionsData.actions || []);
+      setPlans(plansData.plans || []);
+      setSessions(sessionsData.sessions || []);
+      setCommands(commandsData.commands || []);
+      setLearningItems(learningData.items || []);
+      setLearningSettings(learningSettingsData);
       setProjects(projectsData.projects || []);
       setProjectTasks(tasksData.tasks || []);
       setOverview(overviewData);
@@ -1265,8 +1726,29 @@ function App() {
       );
     }
     if (active === "projects") return <ProjectsView projects={projects} projectTasks={projectTasks} />;
+    if (active === "plans") {
+      return (
+        <PlansView
+          plans={plans}
+          commands={commands}
+          settings={settings}
+          workspaces={workspaces}
+          refreshAll={refreshAll}
+        />
+      );
+    }
     if (active === "analytics") {
       return <AnalyticsView stats={stats} hubs={hubs} orphans={orphans} actions={actions} refreshAll={refreshAll} />;
+    }
+    if (active === "learning") {
+      return (
+        <LearningView
+          learningItems={learningItems}
+          learningSettings={learningSettings}
+          settings={settings}
+          refreshAll={refreshAll}
+        />
+      );
     }
     if (active === "settings") {
       return (
@@ -1282,7 +1764,7 @@ function App() {
       );
     }
     return <Dashboard stats={stats} health={health} notes={notes} actions={actions} overview={overview} runIndex={runIndex} />;
-  }, [active, actions, authStatus, health, hubs, notes, orphans, overview, projectTasks, projects, query, ragResults, searchResults, selectedNote, settings, stats, workspaces]);
+  }, [active, actions, authStatus, commands, health, hubs, learningItems, learningSettings, notes, orphans, overview, plans, projectTasks, projects, query, ragResults, searchResults, selectedNote, settings, stats, workspaces]);
 
   if (connectionError && !health) {
     return <ConnectionPanel error={connectionError} onRetry={refreshAll} />;

@@ -163,6 +163,110 @@ CREATE TABLE IF NOT EXISTS embeddings (
     created_at INTEGER,
     FOREIGN KEY (note_id) REFERENCES notes(id)
 );
+
+CREATE TABLE IF NOT EXISTS execution_sessions (
+    id             TEXT PRIMARY KEY,
+    goal           TEXT NOT NULL,
+    workspace      TEXT NOT NULL,
+    provider       TEXT DEFAULT 'ollama',
+    model          TEXT DEFAULT 'qwen3:latest',
+    status         TEXT DEFAULT 'planning',
+    context_pack   TEXT DEFAULT '{}',
+    summary        TEXT DEFAULT '',
+    created_at     INTEGER,
+    updated_at     INTEGER,
+    completed_at   INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_sessions_created ON execution_sessions(created_at);
+CREATE INDEX IF NOT EXISTS idx_execution_sessions_status ON execution_sessions(status);
+
+CREATE TABLE IF NOT EXISTS execution_plans (
+    id               TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    summary          TEXT DEFAULT '',
+    status           TEXT DEFAULT 'draft',
+    risk_level       TEXT DEFAULT 'medium',
+    raw_model_output TEXT DEFAULT '',
+    created_at       INTEGER,
+    updated_at       INTEGER,
+    approved_at      INTEGER,
+    FOREIGN KEY (session_id) REFERENCES execution_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_plans_session ON execution_plans(session_id);
+CREATE INDEX IF NOT EXISTS idx_execution_plans_status ON execution_plans(status);
+
+CREATE TABLE IF NOT EXISTS execution_plan_steps (
+    id                TEXT PRIMARY KEY,
+    plan_id           TEXT NOT NULL,
+    position          INTEGER NOT NULL,
+    title             TEXT NOT NULL,
+    objective         TEXT DEFAULT '',
+    expected_result   TEXT DEFAULT '',
+    files             TEXT DEFAULT '[]',
+    checks            TEXT DEFAULT '[]',
+    risks             TEXT DEFAULT '[]',
+    status            TEXT DEFAULT 'pending',
+    approval_required INTEGER DEFAULT 1,
+    action_ids        TEXT DEFAULT '[]',
+    created_at        INTEGER,
+    updated_at        INTEGER,
+    approved_at       INTEGER,
+    completed_at      INTEGER,
+    FOREIGN KEY (plan_id) REFERENCES execution_plans(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_plan_steps_plan ON execution_plan_steps(plan_id);
+CREATE INDEX IF NOT EXISTS idx_execution_plan_steps_status ON execution_plan_steps(status);
+
+CREATE TABLE IF NOT EXISTS command_runs (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT,
+    plan_id     TEXT,
+    step_id     TEXT,
+    workspace   TEXT NOT NULL,
+    command     TEXT NOT NULL,
+    status      TEXT DEFAULT 'proposed',
+    exit_code   INTEGER,
+    output      TEXT DEFAULT '',
+    error       TEXT DEFAULT '',
+    created_at  INTEGER,
+    started_at  INTEGER,
+    finished_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_command_runs_session ON command_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_command_runs_status ON command_runs(status);
+
+CREATE TABLE IF NOT EXISTS learning_items (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    scope       TEXT DEFAULT 'global',
+    project_id  TEXT,
+    workspace   TEXT,
+    title       TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    source      TEXT DEFAULT 'manual',
+    confidence  REAL DEFAULT 0.8,
+    status      TEXT DEFAULT 'active',
+    created_at  INTEGER,
+    updated_at  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_learning_items_status ON learning_items(status);
+CREATE INDEX IF NOT EXISTS idx_learning_items_scope ON learning_items(scope);
+CREATE INDEX IF NOT EXISTS idx_learning_items_workspace ON learning_items(workspace);
+
+CREATE TABLE IF NOT EXISTS learning_feedback (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT,
+    feedback    TEXT NOT NULL,
+    rating      INTEGER,
+    created_at  INTEGER,
+    FOREIGN KEY (item_id) REFERENCES learning_items(id)
+);
 """
 
 
@@ -620,6 +724,401 @@ async def get_audit_log(limit: int = 100) -> List[Dict[str, Any]]:
             _parse_json_field(data, "payload", {})
             result.append(data)
         return result
+
+
+# ─────────────────────────────────────────────
+# Agent OS — Sessions, Plans, Commands, Learning
+# ─────────────────────────────────────────────
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _hydrate_session(row: sqlite3.Row) -> Dict[str, Any]:
+    data = dict(row)
+    _parse_json_field(data, "context_pack", {})
+    return data
+
+
+def _hydrate_plan(row: sqlite3.Row) -> Dict[str, Any]:
+    return dict(row)
+
+
+def _hydrate_step(row: sqlite3.Row) -> Dict[str, Any]:
+    data = dict(row)
+    for field in ("files", "checks", "risks", "action_ids"):
+        _parse_json_field(data, field, [])
+    data["approval_required"] = bool(data.get("approval_required"))
+    return data
+
+
+def _hydrate_learning_item(row: sqlite3.Row) -> Dict[str, Any]:
+    return dict(row)
+
+
+async def create_execution_session(
+    goal: str,
+    workspace: str,
+    provider: str,
+    model: str,
+    context_pack: Dict[str, Any],
+) -> Dict[str, Any]:
+    session_id = str(uuid.uuid4())
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            INSERT INTO execution_sessions (
+                id, goal, workspace, provider, model, status, context_pack,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'planning', ?, ?, ?)
+        """, (
+            session_id,
+            goal,
+            workspace,
+            provider,
+            model,
+            _json_dumps(context_pack),
+            now,
+            now,
+        ))
+        await db.commit()
+    return await get_execution_session(session_id)
+
+
+async def update_execution_session_status(session_id: str, status: str, summary: str = ""):
+    now = int(time.time())
+    completed_at = now if status in {"completed", "rejected", "failed"} else None
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            UPDATE execution_sessions
+            SET status = ?,
+                summary = COALESCE(NULLIF(?, ''), summary),
+                completed_at = COALESCE(?, completed_at),
+                updated_at = ?
+            WHERE id = ?
+        """, (status, summary, completed_at, now, session_id))
+        await db.commit()
+
+
+async def get_execution_session(session_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM execution_sessions WHERE id = ?", (session_id,))
+        row = await cur.fetchone()
+        return _hydrate_session(row) if row else None
+
+
+async def list_execution_sessions(limit: int = 50) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT * FROM execution_sessions
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cur.fetchall()
+        return [_hydrate_session(row) for row in rows]
+
+
+async def create_execution_plan(
+    session_id: str,
+    title: str,
+    summary: str,
+    risk_level: str,
+    raw_model_output: str = "",
+) -> Dict[str, Any]:
+    plan_id = str(uuid.uuid4())
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            INSERT INTO execution_plans (
+                id, session_id, title, summary, status, risk_level,
+                raw_model_output, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)
+        """, (plan_id, session_id, title, summary, risk_level, raw_model_output, now, now))
+        await db.commit()
+    return await get_execution_plan(plan_id)
+
+
+async def replace_execution_plan_steps(plan_id: str, steps: List[Dict[str, Any]]):
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("DELETE FROM execution_plan_steps WHERE plan_id = ?", (plan_id,))
+        for index, step in enumerate(steps, start=1):
+            await db.execute("""
+                INSERT INTO execution_plan_steps (
+                    id, plan_id, position, title, objective, expected_result,
+                    files, checks, risks, status, approval_required,
+                    action_ids, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, '[]', ?, ?)
+            """, (
+                str(uuid.uuid4()),
+                plan_id,
+                index,
+                step.get("title") or f"Step {index}",
+                step.get("objective", ""),
+                step.get("expected_result", ""),
+                _json_dumps(step.get("files", [])),
+                _json_dumps(step.get("checks", [])),
+                _json_dumps(step.get("risks", [])),
+                1 if step.get("approval_required", True) else 0,
+                now,
+                now,
+            ))
+        await db.commit()
+
+
+async def list_execution_plans(limit: int = 50) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT p.*, s.goal, s.workspace
+            FROM execution_plans p
+            JOIN execution_sessions s ON s.id = p.session_id
+            ORDER BY p.created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cur.fetchall()
+        plans = []
+        for row in rows:
+            plan = dict(row)
+            plan["steps"] = await list_execution_plan_steps(plan["id"])
+            plans.append(plan)
+        return plans
+
+
+async def get_execution_plan(plan_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT p.*, s.goal, s.workspace
+            FROM execution_plans p
+            JOIN execution_sessions s ON s.id = p.session_id
+            WHERE p.id = ?
+        """, (plan_id,))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        plan = _hydrate_plan(row)
+        plan["steps"] = await list_execution_plan_steps(plan_id)
+        return plan
+
+
+async def list_execution_plan_steps(plan_id: str) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT * FROM execution_plan_steps
+            WHERE plan_id = ?
+            ORDER BY position ASC
+        """, (plan_id,))
+        rows = await cur.fetchall()
+        return [_hydrate_step(row) for row in rows]
+
+
+async def set_execution_plan_status(plan_id: str, status: str):
+    now = int(time.time())
+    approved_at = now if status == "approved" else None
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            UPDATE execution_plans
+            SET status = ?,
+                approved_at = COALESCE(?, approved_at),
+                updated_at = ?
+            WHERE id = ?
+        """, (status, approved_at, now, plan_id))
+        await db.commit()
+
+
+async def set_execution_step_status(step_id: str, status: str):
+    now = int(time.time())
+    approved_at = now if status == "approved" else None
+    completed_at = now if status == "completed" else None
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            UPDATE execution_plan_steps
+            SET status = ?,
+                approved_at = COALESCE(?, approved_at),
+                completed_at = COALESCE(?, completed_at),
+                updated_at = ?
+            WHERE id = ?
+        """, (status, approved_at, completed_at, now, step_id))
+        await db.commit()
+
+
+async def create_command_run(
+    workspace: str,
+    command: str,
+    session_id: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    step_id: Optional[str] = None,
+    status: str = "proposed",
+) -> Dict[str, Any]:
+    run_id = str(uuid.uuid4())
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            INSERT INTO command_runs (
+                id, session_id, plan_id, step_id, workspace, command,
+                status, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (run_id, session_id, plan_id, step_id, workspace, command, status, now))
+        await db.commit()
+    return await get_command_run(run_id)
+
+
+async def get_command_run(run_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM command_runs WHERE id = ?", (run_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def list_command_runs(limit: int = 50) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT * FROM command_runs
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cur.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def mark_command_run_started(run_id: str):
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            UPDATE command_runs
+            SET status = 'running', started_at = ?, finished_at = NULL
+            WHERE id = ?
+        """, (now, run_id))
+        await db.commit()
+
+
+async def finish_command_run(
+    run_id: str,
+    status: str,
+    exit_code: Optional[int],
+    output: str = "",
+    error: str = "",
+):
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            UPDATE command_runs
+            SET status = ?,
+                exit_code = ?,
+                output = ?,
+                error = ?,
+                finished_at = ?
+            WHERE id = ?
+        """, (status, exit_code, output[-12000:], error[-12000:], now, run_id))
+        await db.commit()
+
+
+async def create_learning_item(
+    kind: str,
+    title: str,
+    content: str,
+    scope: str = "global",
+    project_id: Optional[str] = None,
+    workspace: Optional[str] = None,
+    source: str = "manual",
+    confidence: float = 0.8,
+    status: str = "active",
+) -> Dict[str, Any]:
+    item_id = str(uuid.uuid4())
+    now = int(time.time())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            INSERT INTO learning_items (
+                id, kind, scope, project_id, workspace, title, content,
+                source, confidence, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            item_id,
+            kind,
+            scope,
+            project_id,
+            workspace,
+            title,
+            content,
+            source,
+            confidence,
+            status,
+            now,
+            now,
+        ))
+        await db.commit()
+    return await get_learning_item(item_id)
+
+
+async def get_learning_item(item_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM learning_items WHERE id = ?", (item_id,))
+        row = await cur.fetchone()
+        return _hydrate_learning_item(row) if row else None
+
+
+async def list_learning_items(
+    status: Optional[str] = None,
+    workspace: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    clauses = []
+    params: List[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if workspace:
+        clauses.append("(workspace IS NULL OR workspace = ? OR scope = 'global')")
+        params.append(workspace)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(f"""
+            SELECT * FROM learning_items
+            {where}
+            ORDER BY updated_at DESC
+            LIMIT ?
+        """, tuple(params))
+        rows = await cur.fetchall()
+        return [_hydrate_learning_item(row) for row in rows]
+
+
+async def set_learning_item_status(item_id: str, status: str):
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            UPDATE learning_items
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+        """, (status, int(time.time()), item_id))
+        await db.commit()
+
+
+async def record_learning_feedback(
+    feedback: str,
+    item_id: Optional[str] = None,
+    rating: Optional[int] = None,
+) -> Dict[str, Any]:
+    feedback_id = str(uuid.uuid4())
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        await db.execute("""
+            INSERT INTO learning_feedback (id, item_id, feedback, rating, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (feedback_id, item_id, feedback, rating, int(time.time())))
+        await db.commit()
+    return {"id": feedback_id, "item_id": item_id, "feedback": feedback, "rating": rating}
 
 
 # ─────────────────────────────────────────────

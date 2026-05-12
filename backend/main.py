@@ -7,6 +7,7 @@ import asyncio
 import ipaddress
 import json
 import os
+import shlex
 import socket
 import sys
 import time
@@ -27,7 +28,10 @@ from database import (
     init_databases, get_vault_stats, get_all_notes, search_notes,
     save_vault_config, get_vault_config, get_activity_heatmap, get_growth_trend,
     record_snapshot, upsert_note, replace_note_links, replace_note_tasks,
-    list_action_requests, get_action_request, get_audit_log
+    list_action_requests, get_action_request, get_audit_log,
+    create_command_run, finish_command_run, get_command_run, mark_command_run_started,
+    list_command_runs, list_execution_plans, list_execution_sessions,
+    get_execution_plan, set_execution_plan_status, set_execution_step_status,
 )
 from vault_manager import get_indexer, set_indexer, VaultIndexer
 from ai_engine import ai_engine, PROVIDERS
@@ -36,6 +40,13 @@ from action_manager import PROJECTS_ROOT, approve_action, propose_action, reject
 from ai_actions import propose_ai_actions
 from analytics_engine import build_overview
 from context_pack import build_workspace_context_pack, context_pack_prompt
+from learning_engine import (
+    activate_learning_item, add_feedback_as_learning, add_learning_item,
+    archive_learning_item, build_learning_context, get_learning_settings,
+    list_memory, save_learning_settings,
+)
+from planner_engine import propose_execution_plan
+from project_health import build_project_health, is_safe_verification_command
 from project_intelligence import load_all_project_tasks, load_project, load_projects
 from semantic_search import hybrid_rag_search
 from security import ensure_auth_token, is_loopback_host, is_valid_token, read_auth_token, token_fingerprint
@@ -263,6 +274,42 @@ class AIActionRequest(BaseModel):
     model: str = "qwen3:latest"
     max_actions: int = 5
     working_directory: Optional[str] = None
+
+class PlanRequest(BaseModel):
+    goal: str
+    provider: str = "ollama"
+    model: str = "qwen3:latest"
+    working_directory: Optional[str] = None
+
+class LearningItemRequest(BaseModel):
+    kind: str = "preference"
+    title: str
+    content: str
+    scope: str = "global"
+    project_id: Optional[str] = None
+    workspace: Optional[str] = None
+    source: str = "manual"
+    confidence: float = 0.8
+    status: Optional[str] = None
+
+class LearningFeedbackRequest(BaseModel):
+    feedback: str
+    title: str = "User correction"
+    rating: Optional[int] = None
+    workspace: Optional[str] = None
+
+class LearningSettingsRequest(BaseModel):
+    mode: Optional[str] = None
+    include_in_chat: Optional[bool] = None
+    auto_promote_feedback: Optional[bool] = None
+    max_context_items: Optional[int] = None
+
+class CommandProposalRequest(BaseModel):
+    command: str
+    working_directory: Optional[str] = None
+    session_id: Optional[str] = None
+    plan_id: Optional[str] = None
+    step_id: Optional[str] = None
 
 
 # ─────────────────────────────────────────────
@@ -527,6 +574,13 @@ async def project_tasks():
     return {"tasks": load_all_project_tasks(_current_vault_root())}
 
 
+@app.get("/api/projects/health")
+async def project_health(path: Optional[str] = None):
+    settings = await app_settings()
+    workspace_root = _safe_workspace_root(path or settings.get("working_directory"))
+    return {"workspace": str(workspace_root), "health": build_project_health(workspace_root)}
+
+
 @app.get("/api/projects/{project_id}")
 async def project_detail(project_id: str):
     project = load_project(_current_vault_root(), project_id)
@@ -539,7 +593,10 @@ async def project_detail(project_id: str):
 async def workspace_context_pack(path: Optional[str] = None):
     settings = await app_settings()
     workspace_root = _safe_workspace_root(path or settings.get("working_directory"))
-    return {"context_pack": build_workspace_context_pack(_current_vault_root(), workspace_root)}
+    return {
+        "context_pack": build_workspace_context_pack(_current_vault_root(), workspace_root),
+        "health": build_project_health(workspace_root),
+    }
 
 
 @app.get("/api/notes")
@@ -719,6 +776,185 @@ async def ai_action_proposal(req: AIActionRequest):
 
 
 # ─────────────────────────────────────────────
+# Routes — Agent OS Plans / Commands / Learning
+# ─────────────────────────────────────────────
+
+@app.post("/api/plans/propose")
+async def propose_plan(req: PlanRequest):
+    settings = await app_settings()
+    workspace_root = _safe_workspace_root(req.working_directory or settings.get("working_directory"))
+    try:
+        result = await propose_execution_plan(
+            goal=req.goal,
+            vault_root=_current_vault_root(),
+            workspace=workspace_root,
+            provider=req.provider,
+            model=req.model,
+        )
+        return {"status": "plan_ready", **result}
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/plans")
+async def plans(limit: int = 50):
+    return {"plans": await list_execution_plans(limit)}
+
+
+@app.get("/api/plans/{plan_id}")
+async def plan_detail(plan_id: str):
+    plan = await get_execution_plan(plan_id)
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    return {"plan": plan}
+
+
+@app.post("/api/plans/{plan_id}/approve")
+async def approve_plan(plan_id: str):
+    if not await get_execution_plan(plan_id):
+        raise HTTPException(404, "Plan not found")
+    await set_execution_plan_status(plan_id, "approved")
+    return {"status": "approved", "plan": await get_execution_plan(plan_id)}
+
+
+@app.post("/api/plans/{plan_id}/reject")
+async def reject_plan(plan_id: str):
+    if not await get_execution_plan(plan_id):
+        raise HTTPException(404, "Plan not found")
+    await set_execution_plan_status(plan_id, "rejected")
+    return {"status": "rejected", "plan": await get_execution_plan(plan_id)}
+
+
+@app.post("/api/plans/steps/{step_id}/{status}")
+async def update_plan_step(step_id: str, status: str):
+    if status not in {"approved", "rejected", "completed", "pending"}:
+        raise HTTPException(400, "Unsupported step status")
+    await set_execution_step_status(step_id, status)
+    return {"status": status, "step_id": step_id}
+
+
+@app.get("/api/sessions")
+async def sessions(limit: int = 50):
+    return {"sessions": await list_execution_sessions(limit)}
+
+
+@app.get("/api/commands")
+async def commands(limit: int = 50):
+    return {"commands": await list_command_runs(limit)}
+
+
+@app.post("/api/commands/propose")
+async def propose_command(req: CommandProposalRequest):
+    settings = await app_settings()
+    workspace_root = _safe_workspace_root(req.working_directory or settings.get("working_directory"))
+    if not is_safe_verification_command(req.command):
+        raise HTTPException(400, "Only safe verification commands can be proposed")
+    command = await create_command_run(
+        workspace=str(workspace_root),
+        command=req.command,
+        session_id=req.session_id,
+        plan_id=req.plan_id,
+        step_id=req.step_id,
+        status="proposed",
+    )
+    return {"status": "proposed", "command": command}
+
+
+@app.post("/api/commands/{run_id}/run")
+async def run_command(run_id: str):
+    command_run = await get_command_run(run_id)
+    if not command_run:
+        raise HTTPException(404, "Command run not found")
+    if command_run["status"] not in {"proposed", "failed"}:
+        raise HTTPException(400, f"Command is not runnable: {command_run['status']}")
+    if not is_safe_verification_command(command_run["command"]):
+        raise HTTPException(400, "Command is not in the safe verification allowlist")
+    workspace_root = _safe_workspace_root(command_run["workspace"])
+    await _run_safe_command(run_id, command_run["command"], workspace_root)
+    return {"status": "finished", "command": await get_command_run(run_id)}
+
+
+async def _run_safe_command(run_id: str, command: str, workspace_root: Path):
+    await mark_command_run_started(run_id)
+    args = shlex.split(command)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(workspace_root),
+            env={
+                **os.environ,
+                "PATH": ":".join([
+                    str(workspace_root / "node_modules" / ".bin"),
+                    "/opt/homebrew/bin",
+                    "/usr/local/bin",
+                    "/usr/bin",
+                    "/bin",
+                    "/usr/sbin",
+                    "/sbin",
+                    os.environ.get("PATH", ""),
+                ]),
+            },
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+        output = stdout.decode("utf-8", errors="ignore")
+        error = stderr.decode("utf-8", errors="ignore")
+        status = "passed" if process.returncode == 0 else "failed"
+        await finish_command_run(run_id, status, process.returncode, output, error)
+    except asyncio.TimeoutError:
+        await finish_command_run(run_id, "failed", None, "", "Command timed out after 120 seconds")
+    except Exception as exc:
+        await finish_command_run(run_id, "failed", None, "", str(exc))
+
+
+@app.get("/api/learning/settings")
+async def learning_settings():
+    return await get_learning_settings()
+
+
+@app.put("/api/learning/settings")
+async def update_learning_settings(req: LearningSettingsRequest):
+    return await save_learning_settings(req.model_dump())
+
+
+@app.get("/api/learning/items")
+async def learning_items(status: Optional[str] = None, workspace: Optional[str] = None, limit: int = 100):
+    return {"items": await list_memory(status=status, workspace=workspace, limit=limit)}
+
+
+@app.post("/api/learning/items")
+async def create_memory_item(req: LearningItemRequest):
+    item = await add_learning_item(**req.model_dump())
+    return {"status": item["status"], "item": item}
+
+
+@app.post("/api/learning/items/{item_id}/activate")
+async def activate_memory_item(item_id: str):
+    await activate_learning_item(item_id)
+    return {"status": "active", "item_id": item_id}
+
+
+@app.post("/api/learning/items/{item_id}/archive")
+async def archive_memory_item(item_id: str):
+    await archive_learning_item(item_id)
+    return {"status": "archived", "item_id": item_id}
+
+
+@app.post("/api/learning/feedback")
+async def learning_feedback(req: LearningFeedbackRequest):
+    settings = await app_settings()
+    workspace = req.workspace or settings.get("working_directory")
+    item = await add_feedback_as_learning(
+        feedback=req.feedback,
+        title=req.title,
+        workspace=workspace,
+        rating=req.rating,
+    )
+    return {"status": item["status"], "item": item}
+
+
+# ─────────────────────────────────────────────
 # Routes — Obsidian Mobile Remote Inbox
 # ─────────────────────────────────────────────
 
@@ -817,6 +1053,7 @@ async def chat_stream(req: ChatRequest):
         stats = await get_vault_stats()
         recent = await get_all_notes(limit=10)
         context_pack = build_workspace_context_pack(_current_vault_root(), workspace_root)
+        learning_context = await build_learning_context(workspace_root)
         vault_context = f"""
 Vault: {str(indexer.vault_root)}
 Active working directory: {workspace_root}
@@ -828,6 +1065,13 @@ Workspace rule: any file work must stay inside Active working directory.
 If a task targets another project, ask the user to switch workspace first.
 
 {context_pack_prompt(context_pack)}
+
+{learning_context}
+
+Assistant mode:
+- Answer ordinary questions directly and conversationally.
+- For implementation work, reason from vault, context pack and learning memory.
+- Do not invent applied file changes; use approval-first actions for writes.
 """
 
     messages = [{"role": m.role, "content": m.content} for m in req.messages]

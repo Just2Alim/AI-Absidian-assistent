@@ -70,12 +70,44 @@ http://192.168.0.219:5173
 
 - `Chat` — поговорить с ИИ по vault и проектам.
 - `Actions` — попросить ИИ подготовить изменения.
+- `Plan` — попросить ИИ сначала создать пошаговый execution plan.
 
 Режим `Actions` не применяет изменения сразу. Он создает pending actions с diff. Потом:
 
 1. Открой `Approval Queue`.
 2. Проверь diff.
 3. Нажми `Approve` или `Reject`.
+
+## 5.1. Execution Plans
+
+Открой `Plans` или выбери `Plan` в `Command`.
+
+1. Выбери workspace.
+2. Опиши большую задачу.
+3. Нажми `Create plan`.
+4. Проверь шаги, риски, файлы и проверки.
+5. Нажми `Approve plan` или отклони план.
+6. Отдельные шаги можно помечать как approved/completed/rejected.
+
+План не меняет файлы сам. Он создает управляемую структуру работы, после которой изменения
+идут через обычную очередь approval actions.
+
+## 5.2. Learning
+
+Открой `Learning`.
+
+- `Add Memory` — вручную добавляет правило, паттерн или предпочтение.
+- `Teach Assistant` — превращает твою поправку в learning memory.
+- В режиме `review` память сначала попадает в очередь проверки.
+- Только `active` memory попадает в chat и planning context.
+
+Это способ обучать ассистента под себя без скрытой самодеятельности.
+
+## 5.3. Project Health and Checks
+
+В `Command` карточка `Context Pack` показывает health score и найденные проверки.
+В `Plans` можно запускать safe checks, например `npm run build`.
+Backend разрешает только проверочные команды из allowlist.
 
 ## 6. Работа через Obsidian Mobile
 
