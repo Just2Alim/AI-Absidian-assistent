@@ -400,6 +400,23 @@ async def search_notes(query: str, limit: int = 20) -> List[Dict]:
         return [dict(r) for r in rows]
 
 
+async def get_note_documents(limit: int = 2000) -> List[Dict[str, Any]]:
+    """Return indexed note text for RAG-style ranking."""
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT
+                n.id, n.path, n.title, n.folder, n.modified_at, n.word_count,
+                n.tags, f.body
+            FROM notes n
+            LEFT JOIN note_fts f ON f.note_id = n.id
+            ORDER BY n.modified_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
 async def get_vault_stats() -> Dict[str, Any]:
     """Get aggregate vault statistics."""
     async with aiosqlite.connect(SQLITE_PATH) as db:

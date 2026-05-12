@@ -3,6 +3,17 @@
 }
 
 :root {
+  --bg: #eef2ef;
+  --surface: #ffffff;
+  --surface-soft: #f4f7f4;
+  --text: #17201e;
+  --muted: #667873;
+  --border: #dce4df;
+  --sidebar: #17201e;
+  --sidebar-active: #22332f;
+  --accent: #2fd0a0;
+  --accent-strong: #0f5a40;
+  --shadow: 0 14px 34px rgba(23, 32, 30, 0.07);
   color: #17201e;
   background: #eef2ef;
   font-family:
@@ -16,7 +27,53 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: #eef2ef;
+  background: var(--bg);
+}
+
+:root[data-theme="dark"] {
+  --bg: #111614;
+  --surface: #1a211f;
+  --surface-soft: #222c28;
+  --text: #eef5f1;
+  --muted: #a7b8b2;
+  --border: #31403b;
+  --sidebar: #0d1110;
+  --sidebar-active: #1f2b27;
+  --shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+}
+
+:root[data-theme="focus"] {
+  --bg: #f5f6f3;
+  --surface: #ffffff;
+  --surface-soft: #f0f2ed;
+  --text: #1d2523;
+  --muted: #69736f;
+  --border: #d8ddd5;
+  --sidebar: #202522;
+  --sidebar-active: #303a35;
+}
+
+:root[data-accent="blue"] {
+  --accent: #4f8cff;
+  --accent-strong: #1f4f9c;
+}
+
+:root[data-accent="violet"] {
+  --accent: #8b6cff;
+  --accent-strong: #5340a0;
+}
+
+:root[data-accent="amber"] {
+  --accent: #e7a927;
+  --accent-strong: #7b4a00;
+}
+
+:root[data-density="compact"] {
+  --density-pad: 12px;
+}
+
+:root[data-density="comfortable"] {
+  --density-pad: 18px;
 }
 
 button,
@@ -42,7 +99,7 @@ button {
   top: 0;
   height: 100vh;
   padding: 24px 18px;
-  background: #17201e;
+  background: var(--sidebar);
   color: #f5f7f5;
   display: flex;
   flex-direction: column;
@@ -67,7 +124,7 @@ button {
   width: 38px;
   height: 38px;
   border-radius: 8px;
-  background: #2fd0a0;
+  background: var(--accent);
   color: #06231a;
 }
 
@@ -106,12 +163,14 @@ button {
 .sidebar nav button.active,
 .sidebar nav button:hover {
   background: #22332f;
+  background: var(--sidebar-active);
   color: #ffffff;
 }
 
 main {
   min-width: 0;
   padding: 24px;
+  background: var(--bg);
 }
 
 .topbar {
@@ -127,6 +186,7 @@ main {
 .panel h2 {
   margin: 0;
   color: #17201e;
+  color: var(--text);
 }
 
 .topbar h1 {
@@ -139,6 +199,7 @@ main {
   font-size: 11px;
   text-transform: uppercase;
   color: #5f736e;
+  color: var(--muted);
   font-weight: 760;
 }
 
@@ -166,7 +227,7 @@ main {
 }
 
 .status.ok {
-  color: #0f5a40;
+  color: var(--accent-strong);
   background: #d9f4e9;
 }
 
@@ -181,6 +242,7 @@ button:not(.toast):not(.note-row):not(.icon-button) {
   border-radius: 8px;
   padding: 0 13px;
   background: #17201e;
+  background: var(--text);
   color: #f7faf8;
   display: inline-flex;
   align-items: center;
@@ -225,10 +287,10 @@ button:disabled {
 
 .metric,
 .panel {
-  background: #ffffff;
-  border: 1px solid #dce4df;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 14px 34px rgba(23, 32, 30, 0.07);
+  box-shadow: var(--shadow);
 }
 
 .metric {
@@ -236,7 +298,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 18px;
+  padding: var(--density-pad);
 }
 
 .metric span,
@@ -246,6 +308,7 @@ button:disabled {
 .action-title span,
 .muted {
   color: #667873;
+  color: var(--muted);
   font-size: 13px;
 }
 
@@ -255,6 +318,7 @@ button:disabled {
   font-size: 25px;
   line-height: 1;
   color: #17201e;
+  color: var(--text);
 }
 
 .metric-icon {
@@ -262,7 +326,7 @@ button:disabled {
   height: 38px;
   border-radius: 8px;
   color: #093225;
-  background: #c8f3e6;
+  background: color-mix(in srgb, var(--accent) 28%, white);
   flex: 0 0 auto;
 }
 
@@ -283,7 +347,7 @@ button:disabled {
 
 .panel {
   min-width: 0;
-  padding: 18px;
+  padding: var(--density-pad);
 }
 
 .panel.wide {
@@ -312,11 +376,61 @@ button:disabled {
   gap: 12px;
 }
 
+.health-score {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #071d16;
+  font-weight: 850;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.health-grid div {
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.health-grid span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.health-grid strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 22px;
+}
+
+.recommendations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.recommendations span {
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
 .runtime div,
 .settings-list div {
   min-width: 0;
   border-radius: 8px;
   background: #f4f7f4;
+  background: var(--surface-soft);
   padding: 14px;
 }
 
@@ -373,7 +487,7 @@ button:disabled {
   align-items: center;
   min-height: 38px;
   border-radius: 8px;
-  background: #f4f7f4;
+  background: var(--surface-soft);
   padding: 10px;
 }
 
@@ -386,13 +500,19 @@ button:disabled {
 
 .project-card {
   min-width: 0;
-  border: 1px solid #dce4df;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 14px 34px rgba(23, 32, 30, 0.07);
+  background: var(--surface);
+  box-shadow: var(--shadow);
   padding: 18px;
   display: grid;
   gap: 14px;
+  cursor: pointer;
+}
+
+.project-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), var(--shadow);
 }
 
 .project-card-head {
@@ -405,15 +525,15 @@ button:disabled {
 .project-card h2 {
   margin: 0;
   font-size: 19px;
-  color: #17201e;
+  color: var(--text);
 }
 
 .project-status {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 7px 10px;
-  background: #edf3ef;
-  color: #304b45;
+  background: var(--surface-soft);
+  color: var(--accent-strong);
   font-size: 12px;
   font-weight: 780;
   white-space: nowrap;
@@ -421,7 +541,7 @@ button:disabled {
 
 .project-summary {
   margin: 0;
-  color: #43554f;
+  color: var(--muted);
   line-height: 1.5;
 }
 
@@ -434,7 +554,7 @@ button:disabled {
 .project-meta div {
   min-width: 0;
   border-radius: 8px;
-  background: #f4f7f4;
+  background: var(--surface-soft);
   padding: 12px;
 }
 
@@ -446,7 +566,7 @@ button:disabled {
 }
 
 .project-meta span {
-  color: #667873;
+  color: var(--muted);
 }
 
 .project-meta strong {
@@ -463,8 +583,8 @@ button:disabled {
 
 .signal-row span {
   border-radius: 999px;
-  background: #e5efe9;
-  color: #27453f;
+  background: var(--surface-soft);
+  color: var(--accent-strong);
   padding: 6px 9px;
   font-weight: 720;
 }
@@ -476,8 +596,8 @@ button:disabled {
   gap: 8px;
   border-radius: 8px;
   padding: 10px;
-  background: #f4f7f4;
-  color: #42554f;
+  background: var(--surface-soft);
+  color: var(--text);
 }
 
 .git-box.ok {
@@ -506,13 +626,43 @@ button:disabled {
   gap: 12px;
   align-items: start;
   border-radius: 8px;
-  background: #f4f7f4;
+  background: var(--surface-soft);
   padding: 11px 12px;
 }
 
 .tasks-table span {
-  color: #42554f;
+  color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.project-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.project-detail-grid div {
+  min-width: 0;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.project-detail-grid span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.project-detail-grid strong {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.compact-diff {
+  max-height: 180px;
+  margin-top: 12px;
 }
 
 .command-layout,
@@ -562,12 +712,13 @@ button:disabled {
 }
 
 textarea,
-input {
+input,
+select {
   width: 100%;
-  border: 1px solid #cfdad4;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #ffffff;
-  color: #17201e;
+  background: var(--surface);
+  color: var(--text);
   outline: none;
 }
 
@@ -582,10 +733,16 @@ input {
   padding: 0 12px;
 }
 
+select {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
 textarea:focus,
-input:focus {
-  border-color: #2ab383;
-  box-shadow: 0 0 0 3px rgba(42, 179, 131, 0.14);
+input:focus,
+select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .side-stack,
@@ -605,10 +762,46 @@ input:focus {
 
 .searchbar {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
   margin-bottom: 14px;
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+
+.segmented button {
+  min-height: 30px !important;
+  padding: 0 10px !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+}
+
+.segmented button.active {
+  background: var(--text) !important;
+  color: var(--surface) !important;
+}
+
+.rag-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--accent-strong);
+  font-weight: 760;
+  font-size: 13px;
+}
+
+.note-row small {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .note-preview pre,
@@ -697,6 +890,43 @@ input:focus {
   box-shadow: 0 18px 40px rgba(23, 32, 30, 0.24);
 }
 
+.access-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.access-card {
+  width: min(560px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  padding: 24px;
+  display: grid;
+  gap: 14px;
+}
+
+.access-card h1,
+.access-card p {
+  margin: 0;
+}
+
+.access-card p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.token-input {
+  display: grid;
+  gap: 7px;
+  font-weight: 720;
+  color: var(--muted);
+}
+
 @media (max-width: 1040px) {
   .app-shell {
     grid-template-columns: 78px minmax(0, 1fr);
@@ -735,6 +965,14 @@ input:focus {
   .runtime {
     grid-template-columns: 1fr;
   }
+
+  .health-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
@@ -769,6 +1007,10 @@ input:focus {
     grid-template-columns: 1fr;
   }
 
+  .health-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chat-panel,
   .note-preview,
   .vault-list-panel {
@@ -789,7 +1031,8 @@ input:focus {
 
   .project-card-head,
   .project-meta,
-  .tasks-table div {
+  .tasks-table div,
+  .project-detail-grid {
     grid-template-columns: 1fr;
   }
 

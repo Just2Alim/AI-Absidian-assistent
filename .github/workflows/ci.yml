@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Python syntax and unit tests
+        run: |
+          python -m py_compile backend/*.py scripts/obsidian_local_agent.py
+          python -m unittest discover -s tests
+
+      - name: Frontend build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Rust native core
+        working-directory: native-core
+        run: cargo check

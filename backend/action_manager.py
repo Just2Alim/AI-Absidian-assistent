@@ -112,6 +112,19 @@ async def propose_action(
         title = title or f"Update note: {path}"
         summary = summary or "Replace the note content after approval."
 
+    elif action_type == "append_note":
+        if not indexer:
+            raise ValueError("Vault is not configured")
+        path = payload["path"]
+        old_content = indexer.read_note_content(path) or ""
+        append_content = payload.get("content", "")
+        separator = "\n\n" if old_content and not old_content.endswith("\n\n") else ""
+        new_content = old_content + separator + append_content.strip() + "\n"
+        payload["content"] = append_content.strip() + "\n"
+        diff_preview = _unified_diff(old_content, new_content, path, path)
+        title = title or f"Append note: {path}"
+        summary = summary or "Append markdown content to an Obsidian note after approval."
+
     elif action_type == "delete_note":
         if not indexer:
             raise ValueError("Vault is not configured")
@@ -182,6 +195,16 @@ async def approve_action(action_id: str, indexer: Optional[VaultIndexer]) -> Dic
             backup = indexer.backup_file(payload["path"])
             indexer.write_note_content(payload["path"], payload.get("content", ""))
             result = {"path": payload["path"], "backup": backup}
+
+        elif action_type == "append_note":
+            if not indexer:
+                raise ValueError("Vault is not configured")
+            backup = indexer.backup_file(payload["path"])
+            old_content = indexer.read_note_content(payload["path"]) or ""
+            separator = "\n\n" if old_content and not old_content.endswith("\n\n") else ""
+            new_content = old_content + separator + payload.get("content", "").strip() + "\n"
+            indexer.write_note_content(payload["path"], new_content)
+            result = {"path": payload["path"], "backup": backup, "mode": "append"}
 
         elif action_type == "delete_note":
             if not indexer:

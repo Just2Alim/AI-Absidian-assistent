@@ -12,9 +12,9 @@ import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -31,7 +31,11 @@ from vault_manager import get_indexer, set_indexer, VaultIndexer
 from ai_engine import ai_engine, PROVIDERS
 from watcher import vault_watcher
 from action_manager import approve_action, propose_action, reject_action
+from ai_actions import propose_ai_actions
+from analytics_engine import build_overview
 from project_intelligence import load_all_project_tasks, load_project, load_projects
+from semantic_search import hybrid_rag_search
+from security import ensure_auth_token, is_loopback_host, is_valid_token, read_auth_token, token_fingerprint
 
 # ─────────────────────────────────────────────
 # App Setup
@@ -45,11 +49,55 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ],
+    allow_origin_regex=(
+        r"^http://("
+        r"192\.168\.\d+\.\d+|"
+        r"10\.\d+\.\d+\.\d+|"
+        r"172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+"
+        r"):(5173|4173)$"
+    ),
+    allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "X-ObsidianAI-Token"],
 )
+
+
+PUBLIC_PATHS = {
+    "/api/health",
+    "/api/auth/status",
+    "/api/auth/local-token",
+}
+
+
+@app.middleware("http")
+async def local_network_auth(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if request.url.path in PUBLIC_PATHS or not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    if is_loopback_host(request.client.host if request.client else None):
+        return await call_next(request)
+
+    raw_token = request.headers.get("X-ObsidianAI-Token")
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        raw_token = auth_header[7:]
+
+    if not is_valid_token(raw_token):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": "LAN access requires X-ObsidianAI-Token",
+                "auth_required": True,
+            },
+        )
+    return await call_next(request)
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -84,6 +132,8 @@ ws_manager = ConnectionManager()
 @app.on_event("startup")
 async def startup():
     await init_databases()
+    token = ensure_auth_token()
+    print(f"[SECURITY] LAN token fingerprint: {token_fingerprint(token)}")
     # Restore saved vault path
     vault_path = (
         await get_vault_config("vault_path")
@@ -183,6 +233,19 @@ class RejectActionRequest(BaseModel):
 class RemoteTaskRequest(BaseModel):
     task: str
 
+class AppSettingsRequest(BaseModel):
+    theme: Optional[str] = None
+    density: Optional[str] = None
+    accent: Optional[str] = None
+    default_model: Optional[str] = None
+    command_mode: Optional[str] = None
+
+class AIActionRequest(BaseModel):
+    goal: str
+    provider: str = "ollama"
+    model: str = "llama3:latest"
+    max_actions: int = 5
+
 
 # ─────────────────────────────────────────────
 # Routes — Health & Config
@@ -206,6 +269,53 @@ async def health():
         },
         "timestamp": int(time.time()),
     }
+
+
+@app.get("/api/auth/status")
+async def auth_status():
+    return {
+        "lan_auth_required": True,
+        "localhost_bypass": True,
+        "token_fingerprint": token_fingerprint(),
+        "header": "X-ObsidianAI-Token",
+    }
+
+
+@app.get("/api/auth/local-token")
+async def local_token(request: Request):
+    if not is_loopback_host(request.client.host if request.client else None):
+        raise HTTPException(403, "Token can only be revealed from localhost")
+    return {
+        "token": read_auth_token(),
+        "fingerprint": token_fingerprint(),
+    }
+
+
+@app.get("/api/settings")
+async def app_settings():
+    raw = await get_vault_config("app_settings")
+    defaults = {
+        "theme": "system",
+        "density": "comfortable",
+        "accent": "emerald",
+        "default_model": "llama3:latest",
+        "command_mode": "safe-actions",
+    }
+    if raw:
+        try:
+            defaults.update(json.loads(raw))
+        except Exception:
+            pass
+    return defaults
+
+
+@app.put("/api/settings")
+async def save_app_settings(req: AppSettingsRequest):
+    current = await app_settings()
+    incoming = {k: v for k, v in req.model_dump().items() if v is not None}
+    current.update(incoming)
+    await save_vault_config("app_settings", json.dumps(current, ensure_ascii=False))
+    return current
 
 
 @app.post("/api/config/vault")
@@ -321,6 +431,11 @@ async def list_notes(limit: int = 200, offset: int = 0):
 async def search(q: str, limit: int = 20):
     results = await search_notes(q, limit)
     return {"results": results, "query": q}
+
+
+@app.get("/api/rag/search")
+async def rag_search(q: str, limit: int = 10):
+    return await hybrid_rag_search(q, limit)
 
 
 @app.get("/api/notes/content")
@@ -458,6 +573,24 @@ async def audit(limit: int = 100):
     return {"items": await get_audit_log(limit)}
 
 
+@app.post("/api/ai/actions/propose")
+async def ai_action_proposal(req: AIActionRequest):
+    indexer = get_indexer()
+    if not indexer:
+        raise HTTPException(400, "Vault not configured")
+    try:
+        result = await propose_ai_actions(
+            req.goal,
+            indexer,
+            provider=req.provider,
+            model=req.model,
+            max_actions=req.max_actions,
+        )
+        return {"status": "pending_approval", **result}
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
 # ─────────────────────────────────────────────
 # Routes — Obsidian Mobile Remote Inbox
 # ─────────────────────────────────────────────
@@ -534,6 +667,11 @@ async def heatmap(days: int = 365):
 @app.get("/api/analytics/growth")
 async def growth(days: int = 30):
     return {"growth": get_growth_trend(days)}
+
+
+@app.get("/api/analytics/overview")
+async def analytics_overview():
+    return await build_overview(_current_vault_root())
 
 
 # ─────────────────────────────────────────────

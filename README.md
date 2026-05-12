@@ -31,6 +31,12 @@ Or run both:
 ./scripts/start_dev.sh
 ```
 
+Install macOS autostart agents for backend, frontend, and mobile bridge:
+
+```bash
+./scripts/install_launch_agents.sh
+```
+
 Open:
 
 - Desktop: `http://localhost:5173`
@@ -59,6 +65,17 @@ Recommended larger local model:
 ```bash
 ollama pull qwen3:14b
 ```
+
+## LAN Security
+
+Localhost works without a token. Phone/LAN clients must send `X-ObsidianAI-Token`.
+The token is generated at:
+
+```text
+data/auth-token.txt
+```
+
+Open Settings in the web UI to save the token on the phone.
 
 ## Mobile Bridge
 
@@ -93,6 +110,35 @@ GET /api/projects
 GET /api/projects/tasks
 GET /api/projects/{project_id}
 ```
+
+## AI Action Engine
+
+Natural language goals can become reviewable pending actions:
+
+```text
+POST /api/ai/actions/propose
+```
+
+Supported action types:
+
+- `create_note`
+- `update_note`
+- `append_note`
+- `write_file`
+- `rename_note`
+- `delete_note`
+
+Every action still waits in the approval queue before writing anything.
+
+## RAG Search
+
+Hybrid local search endpoint:
+
+```text
+GET /api/rag/search?q=...
+```
+
+It combines SQLite FTS with local token-semantic scoring and returns context snippets for AI prompts.
 
 ## Safety
 

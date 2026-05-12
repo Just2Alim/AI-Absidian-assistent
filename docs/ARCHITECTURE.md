@@ -26,6 +26,8 @@ flowchart LR
     Bridge["scripts/obsidian_local_agent.py<br/>Ollama mobile bridge"]
     API["FastAPI Core<br/>index, search, actions"]
     Projects["Project Intelligence<br/>paths, git, tasks"]
+    Security["LAN Security<br/>token auth"]
+    RAG["Hybrid RAG<br/>FTS + semantic scoring"]
     DB["SQLite FTS<br/>DuckDB Analytics"]
     UI["React Web UI<br/>phone + desktop"]
     Ollama["Ollama<br/>local models"]
@@ -35,10 +37,13 @@ flowchart LR
     Vault --> Bridge
     Bridge --> Ollama
     Bridge --> API
+    Security --> API
     API --> DB
     API --> Vault
     API --> Projects
+    API --> RAG
     Projects --> Vault
+    RAG --> DB
     UI --> API
     FutureShell --> UI
 ```
@@ -89,6 +94,7 @@ Supported first actions:
 
 - `create_note`
 - `update_note`
+- `append_note`
 - `delete_note`
 - `rename_note`
 - `write_file` under `/Users/justalim/projects`
@@ -122,6 +128,7 @@ Protected areas:
 
 ### Phase 3: Deep RAG
 
+- Hybrid local semantic search ✅
 - Embedding index for semantic search
 - Context packs per project
 - Link recommendations
@@ -131,6 +138,7 @@ Protected areas:
 ### Phase 4: Native Desktop
 
 - Tauri shell
+- macOS launchd autostart for backend/frontend/mobile bridge ✅
 - Menu bar agent controls
 - Local notifications for pending approvals
 - Secure command permissions

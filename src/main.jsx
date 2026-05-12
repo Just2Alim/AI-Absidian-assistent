@@ -12,22 +12,28 @@ import {
   FolderKanban,
   GitBranch,
   Inbox,
+  KeyRound,
+  Layers3,
   LayoutDashboard,
+  LockKeyhole,
   Network,
+  Palette,
   Play,
   RefreshCcw,
   Search,
   Send,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
-  TerminalSquare,
+  WandSparkles,
   X,
 } from "lucide-react";
 import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || `${window.location.protocol}//${window.location.hostname}:8765`;
 const DEFAULT_VAULT = "/Users/justalim/projects/obsidian-vault";
+const AUTH_TOKEN_KEY = "obsidian_ai_token";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -54,13 +60,18 @@ function formatTime(epoch) {
 }
 
 async function api(path, options = {}) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "X-ObsidianAI-Token": token } : {}),
+      ...(options.headers || {}),
+    },
     ...options,
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error(`${res.status} ${text || res.statusText}`);
   }
   return res.json();
 }
@@ -132,7 +143,55 @@ function Header({ health, refreshAll }) {
   );
 }
 
-function Dashboard({ stats, health, notes, actions, runIndex }) {
+function AccessPanel({ authStatus, onSave }) {
+  const [token, setToken] = useState("");
+
+  async function loadLocalToken() {
+    const data = await api("/api/auth/local-token");
+    setToken(data.token);
+  }
+
+  return (
+    <section className="access-shell">
+      <div className="access-card">
+        <div className="brand-mark">
+          <LockKeyhole size={20} />
+        </div>
+        <h1>Secure LAN Access</h1>
+        <p>
+          Для доступа с телефона нужен локальный токен. На Mac его можно получить
+          автоматически, а на телефоне вставить один раз.
+        </p>
+        <div className="settings-list">
+          <div>
+            <span>Fingerprint</span>
+            <strong>{authStatus?.token_fingerprint || "unknown"}</strong>
+          </div>
+          <div>
+            <span>Header</span>
+            <code>X-ObsidianAI-Token</code>
+          </div>
+        </div>
+        <label className="token-input">
+          Access token
+          <input value={token} onChange={(event) => setToken(event.target.value)} />
+        </label>
+        <div className="button-row">
+          <button onClick={() => onSave(token)}>
+            <KeyRound size={16} />
+            Save token
+          </button>
+          <button className="ghost" onClick={loadLocalToken}>
+            <ShieldCheck size={16} />
+            Load on Mac
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Dashboard({ stats, health, notes, actions, overview, runIndex }) {
   const recent = notes.slice(0, 6);
   const pending = actions.filter((item) => item.status === "pending");
   return (
@@ -171,6 +230,22 @@ function Dashboard({ stats, health, notes, actions, runIndex }) {
         </div>
       </div>
 
+      <div className="panel wide">
+        <div className="panel-head compact">
+          <h2>System Health</h2>
+          <div className="health-score">{overview?.quality_score ?? 0}</div>
+        </div>
+        <div className="health-grid">
+          <div><span>Active projects</span><strong>{overview?.projects?.active ?? 0}</strong></div>
+          <div><span>Dirty repos</span><strong>{overview?.projects?.dirty ?? 0}</strong></div>
+          <div><span>Open tasks</span><strong>{overview?.tasks?.open ?? 0}</strong></div>
+          <div><span>Unmapped</span><strong>{overview?.projects?.unmapped ?? 0}</strong></div>
+        </div>
+        <div className="recommendations">
+          {(overview?.recommendations || []).map((item) => <span key={item}>{item}</span>)}
+        </div>
+      </div>
+
       <div className="panel">
         <div className="panel-head compact">
           <h2>Recent Notes</h2>
@@ -203,12 +278,13 @@ function Dashboard({ stats, health, notes, actions, runIndex }) {
   );
 }
 
-function CommandCenter({ actions, refreshAll }) {
+function CommandCenter({ actions, refreshAll, settings }) {
   const [messages, setMessages] = useState([
     { role: "assistant", content: "Готов. Я отвечаю с учетом vault и создаю изменения только через очередь подтверждений." },
   ]);
   const [input, setInput] = useState("");
   const [remoteTask, setRemoteTask] = useState("");
+  const [mode, setMode] = useState("chat");
   const [busy, setBusy] = useState(false);
 
   async function sendChat() {
@@ -219,12 +295,41 @@ function CommandCenter({ actions, refreshAll }) {
     setInput("");
     setBusy(true);
     try {
+      if (mode === "actions") {
+        const data = await api("/api/ai/actions/propose", {
+          method: "POST",
+          body: JSON.stringify({
+            goal: text,
+            provider: "ollama",
+            model: settings?.default_model || "llama3:latest",
+            max_actions: 5,
+          }),
+        });
+        const actionText = [
+          `Создал pending actions: ${data.actions?.length || 0}`,
+          ...(data.actions || []).map((item) => `- ${item.title}`),
+          ...(data.errors || []).map((item) => `- Ошибка: ${item.title}: ${item.error}`),
+        ].join("\n");
+        setMessages((current) => {
+          const copy = [...current];
+          copy[copy.length - 1] = { role: "assistant", content: actionText };
+          return copy;
+        });
+        await refreshAll();
+        return;
+      }
+
       const res = await fetch(`${API_BASE}/api/ai/chat/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(localStorage.getItem(AUTH_TOKEN_KEY)
+            ? { "X-ObsidianAI-Token": localStorage.getItem(AUTH_TOKEN_KEY) }
+            : {}),
+        },
         body: JSON.stringify({
           provider: "ollama",
-          model: "llama3:latest",
+          model: settings?.default_model || "llama3:latest",
           messages: next.filter((m) => m.content).map((m) => ({ role: m.role, content: m.content })),
           include_vault_context: true,
         }),
@@ -272,9 +377,15 @@ function CommandCenter({ actions, refreshAll }) {
             <p className="eyebrow">AI</p>
             <h2>Command Center</h2>
           </div>
-          <div className="pill">
-            <Bot size={14} />
-            Ollama
+          <div className="segmented">
+            <button className={mode === "chat" ? "active" : ""} onClick={() => setMode("chat")}>
+              <Bot size={14} />
+              Chat
+            </button>
+            <button className={mode === "actions" ? "active" : ""} onClick={() => setMode("actions")}>
+              <WandSparkles size={14} />
+              Actions
+            </button>
           </div>
         </div>
         <div className="chat-log">
@@ -291,7 +402,7 @@ function CommandCenter({ actions, refreshAll }) {
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendChat();
             }}
-            placeholder="Спроси про vault, проект, план реализации..."
+            placeholder={mode === "chat" ? "Спроси про vault, проект, план реализации..." : "Опиши действие: создать заметку, обновить проект, подготовить файл..."}
           />
           <button onClick={sendChat} disabled={busy || !input.trim()} title="Отправить">
             <Send size={18} />
@@ -322,7 +433,7 @@ function CommandCenter({ actions, refreshAll }) {
   );
 }
 
-function VaultView({ notes, searchResults, query, setQuery, runSearch, selectNote, selectedNote }) {
+function VaultView({ notes, searchResults, ragResults, query, setQuery, runSearch, runRagSearch, selectNote, selectedNote }) {
   return (
     <section className="view vault-layout">
       <div className="panel vault-list-panel">
@@ -340,13 +451,21 @@ function VaultView({ notes, searchResults, query, setQuery, runSearch, selectNot
             onKeyDown={(event) => event.key === "Enter" && runSearch()}
             placeholder="Поиск по заметкам, тегам и содержимому"
           />
-          <button onClick={runSearch}>Search</button>
+          <button onClick={runSearch}>FTS</button>
+          <button className="ghost" onClick={runRagSearch}>RAG</button>
         </div>
+        {!!ragResults.length && (
+          <div className="rag-strip">
+            <Layers3 size={16} />
+            <span>Hybrid semantic results</span>
+          </div>
+        )}
         <div className="note-list scroll">
-          {(query ? searchResults : notes).map((note) => (
+          {(ragResults.length ? ragResults : query ? searchResults : notes).map((note) => (
             <button className="note-row selectable" key={note.id} onClick={() => selectNote(note.path)}>
               <strong>{note.title}</strong>
-              <span>{note.path}</span>
+              <span>{note.path}{note.score ? ` · score ${note.score}` : ""}</span>
+              {note.snippet && <small>{note.snippet}</small>}
             </button>
           ))}
         </div>
@@ -365,6 +484,11 @@ function ProjectsView({ projects, projectTasks }) {
   const active = projects.filter((project) => project.group.includes("Активные"));
   const dirty = projects.filter((project) => project.git?.dirty > 0);
   const withPaths = projects.filter((project) => project.path);
+  const [selectedId, setSelectedId] = useState(projects[0]?.id || null);
+  useEffect(() => {
+    if (!selectedId && projects[0]?.id) setSelectedId(projects[0].id);
+  }, [projects, selectedId]);
+  const selected = projects.find((project) => project.id === selectedId) || projects[0];
 
   return (
     <section className="view projects-layout">
@@ -377,7 +501,11 @@ function ProjectsView({ projects, projectTasks }) {
 
       <div className="projects-grid">
         {projects.map((project) => (
-          <article className="project-card" key={project.id}>
+          <article
+            className={`project-card ${selected?.id === project.id ? "selected" : ""}`}
+            key={project.id}
+            onClick={() => setSelectedId(project.id)}
+          >
             <div className="project-card-head">
               <div>
                 <p className="eyebrow">{project.group.replace("📁 ", "")}</p>
@@ -428,6 +556,49 @@ function ProjectsView({ projects, projectTasks }) {
           </article>
         ))}
       </div>
+
+      {selected && (
+        <div className="panel wide project-detail">
+          <div className="panel-head">
+            <div>
+              <p className="eyebrow">Project Workspace</p>
+              <h2>{selected.title}</h2>
+            </div>
+            <span className="project-status">{selected.status}</span>
+          </div>
+          <div className="project-detail-grid">
+            <div>
+              <span>Vault Note</span>
+              <strong>{selected.note_path}</strong>
+            </div>
+            <div>
+              <span>Local Path</span>
+              <strong>{selected.path || "not mapped"}</strong>
+            </div>
+            <div>
+              <span>Repository</span>
+              <strong>{selected.github || "not recorded"}</strong>
+            </div>
+            <div>
+              <span>Git</span>
+              <strong>{selected.git?.branch || selected.git?.reason || "unknown"}</strong>
+            </div>
+          </div>
+          {!!selected.status_details?.length && (
+            <div className="task-stack">
+              {selected.status_details.map((item) => (
+                <div key={item}>
+                  <Check size={14} />
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!!selected.git?.changes?.length && (
+            <pre className="diff compact-diff">{selected.git.changes.join("\n")}</pre>
+          )}
+        </div>
+      )}
 
       <div className="panel wide">
         <div className="panel-head compact">
@@ -531,11 +702,17 @@ function AnalyticsView({ stats, hubs, orphans, actions, refreshAll }) {
   );
 }
 
-function SettingsView({ health, setupVault, runIndex }) {
+function SettingsView({ health, settings, authStatus, setupVault, runIndex, saveSettings }) {
   const [vaultPath, setVaultPath] = useState(health?.vault_path || DEFAULT_VAULT);
+  const [draft, setDraft] = useState(settings);
   useEffect(() => {
     if (health?.vault_path) setVaultPath(health.vault_path);
   }, [health?.vault_path]);
+  useEffect(() => setDraft(settings), [settings]);
+
+  function updateDraft(key, value) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
 
   return (
     <section className="view settings-layout">
@@ -564,6 +741,50 @@ function SettingsView({ health, setupVault, runIndex }) {
         </div>
       </div>
       <div className="panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Interface</p>
+            <h2>Personalization</h2>
+          </div>
+          <Palette size={20} />
+        </div>
+        <div className="form-stack">
+          <label>
+            Theme
+            <select value={draft.theme || "system"} onChange={(event) => updateDraft("theme", event.target.value)}>
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="focus">Focus</option>
+            </select>
+          </label>
+          <label>
+            Density
+            <select value={draft.density || "comfortable"} onChange={(event) => updateDraft("density", event.target.value)}>
+              <option value="comfortable">Comfortable</option>
+              <option value="compact">Compact</option>
+            </select>
+          </label>
+          <label>
+            Accent
+            <select value={draft.accent || "emerald"} onChange={(event) => updateDraft("accent", event.target.value)}>
+              <option value="emerald">Emerald</option>
+              <option value="blue">Blue</option>
+              <option value="violet">Violet</option>
+              <option value="amber">Amber</option>
+            </select>
+          </label>
+          <label>
+            Default local model
+            <input value={draft.default_model || "llama3:latest"} onChange={(event) => updateDraft("default_model", event.target.value)} />
+          </label>
+          <button onClick={() => saveSettings(draft)}>
+            <SlidersHorizontal size={16} />
+            Save interface
+          </button>
+        </div>
+      </div>
+      <div className="panel">
         <div className="panel-head compact">
           <h2>Local AI</h2>
         </div>
@@ -581,6 +802,10 @@ function SettingsView({ health, setupVault, runIndex }) {
             <code>ollama pull qwen3:14b</code>
           </div>
           <div>
+            <span>LAN token</span>
+            <code>{authStatus?.token_fingerprint || "unknown fingerprint"}</code>
+          </div>
+          <div>
             <span>Mobile bridge</span>
             <code>python3 scripts/obsidian_local_agent.py</code>
           </div>
@@ -593,6 +818,15 @@ function SettingsView({ health, setupVault, runIndex }) {
 function App() {
   const [active, setActive] = useState("dashboard");
   const [health, setHealth] = useState(null);
+  const [authStatus, setAuthStatus] = useState(null);
+  const [authLocked, setAuthLocked] = useState(false);
+  const [settings, setSettings] = useState({
+    theme: "system",
+    density: "comfortable",
+    accent: "emerald",
+    default_model: "llama3:latest",
+  });
+  const [overview, setOverview] = useState(null);
   const [stats, setStats] = useState(null);
   const [notes, setNotes] = useState([]);
   const [actions, setActions] = useState([]);
@@ -602,24 +836,43 @@ function App() {
   const [orphans, setOrphans] = useState([]);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+  const [ragResults, setRagResults] = useState([]);
   const [selectedNote, setSelectedNote] = useState(null);
   const [toast, setToast] = useState("");
 
   async function refreshAll() {
-    const [healthData, statsData, notesData, actionsData, projectsData, tasksData] = await Promise.all([
+    const [healthData, authData] = await Promise.all([
       api("/api/health"),
-      api("/api/vault/stats"),
-      api("/api/notes?limit=200"),
-      api("/api/actions?limit=100"),
-      api("/api/projects"),
-      api("/api/projects/tasks"),
+      api("/api/auth/status"),
     ]);
     setHealth(healthData);
-    setStats(statsData);
-    setNotes(notesData.notes || []);
-    setActions(actionsData.actions || []);
-    setProjects(projectsData.projects || []);
-    setProjectTasks(tasksData.tasks || []);
+    setAuthStatus(authData);
+
+    try {
+      const [settingsData, statsData, notesData, actionsData, projectsData, tasksData, overviewData] = await Promise.all([
+        api("/api/settings"),
+        api("/api/vault/stats"),
+        api("/api/notes?limit=200"),
+        api("/api/actions?limit=100"),
+        api("/api/projects"),
+        api("/api/projects/tasks"),
+        api("/api/analytics/overview"),
+      ]);
+      setSettings(settingsData);
+      setStats(statsData);
+      setNotes(notesData.notes || []);
+      setActions(actionsData.actions || []);
+      setProjects(projectsData.projects || []);
+      setProjectTasks(tasksData.tasks || []);
+      setOverview(overviewData);
+      setAuthLocked(false);
+    } catch (error) {
+      if (String(error.message || error).includes("401")) {
+        setAuthLocked(true);
+        return;
+      }
+      throw error;
+    }
 
     Promise.all([api("/api/graph/hubs?n=10"), api("/api/graph/orphans")])
       .then(([hubData, orphanData]) => {
@@ -651,6 +904,16 @@ function App() {
     }
     const data = await api(`/api/notes/search?q=${encodeURIComponent(query)}&limit=80`);
     setSearchResults(data.results || []);
+    setRagResults([]);
+  }
+
+  async function runRagSearch() {
+    if (!query.trim()) {
+      setRagResults([]);
+      return;
+    }
+    const data = await api(`/api/rag/search?q=${encodeURIComponent(query)}&limit=40`);
+    setRagResults(data.results || []);
   }
 
   async function selectNote(path) {
@@ -664,16 +927,39 @@ function App() {
     });
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme || "system";
+    document.documentElement.dataset.accent = settings.accent || "emerald";
+    document.documentElement.dataset.density = settings.density || "comfortable";
+  }, [settings]);
+
+  async function saveSettings(next) {
+    const data = await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify(next),
+    });
+    setSettings(data);
+    setToast("Interface settings saved.");
+  }
+
+  function saveToken(token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token.trim());
+    setAuthLocked(false);
+    refreshAll();
+  }
+
   const view = useMemo(() => {
-    if (active === "command") return <CommandCenter actions={actions} refreshAll={refreshAll} />;
+    if (active === "command") return <CommandCenter actions={actions} refreshAll={refreshAll} settings={settings} />;
     if (active === "vault") {
       return (
         <VaultView
           notes={notes}
           searchResults={searchResults}
+          ragResults={ragResults}
           query={query}
           setQuery={setQuery}
           runSearch={runSearch}
+          runRagSearch={runRagSearch}
           selectNote={selectNote}
           selectedNote={selectedNote}
         />
@@ -683,12 +969,27 @@ function App() {
     if (active === "analytics") {
       return <AnalyticsView stats={stats} hubs={hubs} orphans={orphans} actions={actions} refreshAll={refreshAll} />;
     }
-    if (active === "settings") return <SettingsView health={health} setupVault={setupVault} runIndex={runIndex} />;
-    return <Dashboard stats={stats} health={health} notes={notes} actions={actions} runIndex={runIndex} />;
-  }, [active, actions, health, hubs, notes, orphans, projectTasks, projects, query, searchResults, selectedNote, stats]);
+    if (active === "settings") {
+      return (
+        <SettingsView
+          health={health}
+          settings={settings}
+          authStatus={authStatus}
+          setupVault={setupVault}
+          runIndex={runIndex}
+          saveSettings={saveSettings}
+        />
+      );
+    }
+    return <Dashboard stats={stats} health={health} notes={notes} actions={actions} overview={overview} runIndex={runIndex} />;
+  }, [active, actions, authStatus, health, hubs, notes, orphans, overview, projectTasks, projects, query, ragResults, searchResults, selectedNote, settings, stats]);
+
+  if (authLocked) {
+    return <AccessPanel authStatus={authStatus} onSave={saveToken} />;
+  }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell theme-${settings.theme || "system"} density-${settings.density || "comfortable"} accent-${settings.accent || "emerald"}`}>
       <Sidebar active={active} setActive={setActive} />
       <main>
         <Header health={health} refreshAll={refreshAll} />
