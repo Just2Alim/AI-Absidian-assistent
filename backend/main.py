@@ -38,9 +38,9 @@ from vault_manager import get_indexer, set_indexer, VaultIndexer
 from ai_engine import ai_engine, PROVIDERS
 from watcher import vault_watcher
 from action_manager import PROJECTS_ROOT, approve_action, propose_action, reject_action
-from ai_actions import propose_ai_actions
+from ai_actions import propose_ai_actions, _looks_like_code_request
 from analytics_engine import build_overview
-from context_pack import build_workspace_context_pack, context_pack_prompt
+from context_pack import build_workspace_context_pack, context_pack_prompt, is_container_workspace
 from learning_engine import (
     activate_learning_item, add_feedback_as_learning, add_learning_item,
     archive_learning_item, build_learning_context, get_learning_settings,
@@ -479,7 +479,21 @@ async def workspaces():
                 "path": str(resolved),
                 "has_git": (path / ".git").exists(),
                 "markers": sorted(set(markers)),
+                "kind": "root",
             })
+            pack = build_workspace_context_pack(_current_vault_root(), resolved)
+            for nested in pack.get("nested_workspace_candidates", []):
+                nested_path = nested.get("path")
+                if not nested_path:
+                    continue
+                items.append({
+                    "name": f"{path.name} / {nested.get('relative')}",
+                    "path": nested_path,
+                    "has_git": Path(nested_path, ".git").exists(),
+                    "markers": nested.get("signals") or [],
+                    "kind": "nested",
+                    "parent": str(resolved),
+                })
     return {
         "root": str(PROJECTS_ROOT),
         "active": (await app_settings()).get("working_directory"),
@@ -768,6 +782,18 @@ async def ai_action_proposal(req: AIActionRequest):
     try:
         settings = await app_settings()
         workspace_root = _safe_workspace_root(req.working_directory or settings.get("working_directory"))
+        context_pack = build_workspace_context_pack(_current_vault_root(), workspace_root)
+        if _looks_like_code_request(req.goal) and is_container_workspace(context_pack):
+            suggestions = ", ".join(
+                item.get("relative", "")
+                for item in context_pack.get("nested_workspace_candidates", [])[:6]
+                if item.get("relative")
+            )
+            raise HTTPException(
+                400,
+                "Selected workspace is a container with nested projects. "
+                f"Switch to a concrete child folder first: {suggestions or 'choose a nested project'}."
+            )
         result = await propose_ai_actions(
             req.goal,
             indexer,

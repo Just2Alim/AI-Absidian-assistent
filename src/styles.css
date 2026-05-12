@@ -834,6 +834,53 @@ select:focus {
   font-weight: 760;
 }
 
+.nested-workspace-box {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.nested-workspace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nested-workspace-head span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.nested-workspace-list {
+  display: grid;
+  gap: 8px;
+}
+
+.nested-workspace-item {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.nested-workspace-item span,
+.nested-workspace-item small {
+  color: var(--muted);
+}
+
+.nested-workspace-item strong,
+.nested-workspace-item span,
+.nested-workspace-item small {
+  overflow-wrap: anywhere;
+}
+
 .tree-preview {
   border-radius: 8px;
   background: var(--surface-soft);

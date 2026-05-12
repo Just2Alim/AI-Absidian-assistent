@@ -554,11 +554,17 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
         }
       }
     } catch (error) {
+      const message = String(error.message || error);
+      const workspaceHint = message.includes("Selected workspace is a container with nested projects")
+        ? "Выбран общий контейнер проектов. Сначала переключи Active Workspace на одну из concrete project folders справа, потом повтори действие."
+        : null;
       setMessages((current) => {
         const copy = [...current];
         copy[copy.length - 1] = {
           role: "assistant",
-          content: `Ошибка: ${error.message || error}\n\nЯ снял зависший запрос. Для простого общения включи Chat, для изменения файлов оставь Actions.`,
+          content: workspaceHint
+            ? `Ошибка: ${message}\n\n${workspaceHint}`
+            : `Ошибка: ${message}\n\nЯ снял зависший запрос. Для простого общения включи Chat, для изменения файлов оставь Actions.`,
         };
         return copy;
       });
@@ -579,6 +585,11 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
 
   async function saveWorkspace() {
     await saveSettings({ ...settings, working_directory: workspace });
+  }
+
+  async function useWorkspace(path) {
+    setWorkspace(path);
+    await saveSettings({ ...settings, working_directory: path });
   }
 
   return (
@@ -657,7 +668,12 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
             <p className="muted path-hint">{workspace || "No workspace selected"}</p>
           </div>
         </div>
-        <ContextPackCard contextPack={contextPack} health={contextHealth} loading={contextLoading} />
+        <ContextPackCard
+          contextPack={contextPack}
+          health={contextHealth}
+          loading={contextLoading}
+          useWorkspace={useWorkspace}
+        />
         <div className="panel">
           <div className="panel-head compact">
             <h2>Mobile Inbox</h2>
@@ -680,11 +696,12 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
   );
 }
 
-function ContextPackCard({ contextPack, health, loading }) {
+function ContextPackCard({ contextPack, health, loading, useWorkspace }) {
   const project = contextPack?.project;
   const runtime = contextPack?.runtime || {};
   const git = contextPack?.git || {};
   const risks = contextPack?.risks || [];
+  const nestedCandidates = contextPack?.nested_workspace_candidates || [];
   return (
     <div className="panel context-panel">
       <div className="panel-head compact">
@@ -739,6 +756,29 @@ function ContextPackCard({ contextPack, health, loading }) {
           {!!risks.length && (
             <div className="risk-list">
               {risks.map((risk) => <span key={risk}>{risk}</span>)}
+            </div>
+          )}
+          {!!nestedCandidates.length && (
+            <div className="nested-workspace-box">
+              <div className="nested-workspace-head">
+                <span>Concrete project folders</span>
+                <strong>{nestedCandidates.length}</strong>
+              </div>
+              <div className="nested-workspace-list">
+                {nestedCandidates.slice(0, 8).map((item) => (
+                  <button
+                    type="button"
+                    className="nested-workspace-item"
+                    key={item.path}
+                    onClick={() => useWorkspace?.(item.path)}
+                    title={item.path}
+                  >
+                    <strong>{item.relative}</strong>
+                    <span>{item.signals?.join(", ") || "project"}</span>
+                    {!!item.scripts?.length && <small>{item.scripts.slice(0, 3).join(" · ")}</small>}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           <details className="tree-preview">

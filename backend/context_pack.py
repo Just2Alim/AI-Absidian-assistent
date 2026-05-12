@@ -34,6 +34,14 @@ IMPORTANT_FILES = (
     "docker-compose.yml",
 )
 
+NESTED_RUNTIME_FILES = (
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "Cargo.toml",
+    "pubspec.yaml",
+)
+
 
 def _run_git(path: Path, args: List[str], timeout: int = 4) -> Optional[str]:
     try:
@@ -91,6 +99,44 @@ def _runtime_summary(root: Path) -> Dict[str, Any]:
     }
 
 
+def _nested_workspace_candidates(root: Path, limit: int = 10) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for marker in NESTED_RUNTIME_FILES:
+        for path in sorted(root.rglob(marker), key=lambda item: str(item).lower()):
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                continue
+            if len(rel.parts) < 2 or len(rel.parts) > 3:
+                continue
+            if any(part in {".git", "node_modules", "dist", "build", ".venv"} for part in rel.parts):
+                continue
+            project_root = path.parent
+            runtime = _runtime_summary(project_root)
+            items.append({
+                "path": str(project_root),
+                "relative": str(project_root.relative_to(root)),
+                "signals": runtime["signals"],
+                "scripts": runtime["scripts"][:6],
+            })
+            if len(items) >= limit:
+                return items
+    deduped = []
+    seen = set()
+    for item in items:
+        if item["path"] in seen:
+            continue
+        seen.add(item["path"])
+        deduped.append(item)
+    return deduped[:limit]
+
+
+def is_container_workspace(pack: Dict[str, Any]) -> bool:
+    runtime = pack.get("runtime") or {}
+    nested = pack.get("nested_workspace_candidates") or []
+    return not runtime.get("signals") and bool(nested)
+
+
 def _git_summary(root: Path) -> Dict[str, Any]:
     top = _run_git(root, ["rev-parse", "--show-toplevel"])
     if not top:
@@ -136,6 +182,7 @@ def build_workspace_context_pack(vault_root: Path, workspace: Path) -> Dict[str,
     workspace = workspace.resolve()
     project = _matching_project(vault_root, workspace)
     runtime = _runtime_summary(workspace)
+    nested_candidates = _nested_workspace_candidates(workspace) if not runtime["signals"] else []
     git = _git_summary(workspace)
     important = [
         {
@@ -153,6 +200,8 @@ def build_workspace_context_pack(vault_root: Path, workspace: Path) -> Dict[str,
         risks.append("Workspace is not mapped to a vault project note.")
     if not runtime["signals"]:
         risks.append("No runtime markers detected at workspace root.")
+    if nested_candidates:
+        risks.append("Workspace contains nested app folders. Consider switching to a concrete child project before code generation.")
 
     instructions = [
         f"Work only inside: {workspace}",
@@ -165,6 +214,7 @@ def build_workspace_context_pack(vault_root: Path, workspace: Path) -> Dict[str,
         "workspace": str(workspace),
         "project": project,
         "runtime": runtime,
+        "nested_workspace_candidates": nested_candidates,
         "git": git,
         "tree": _file_tree(workspace),
         "important_files": important,
@@ -181,6 +231,10 @@ def context_pack_prompt(pack: Dict[str, Any]) -> str:
     tree = "\n".join(f"- {item}" for item in pack.get("tree", [])[:40])
     risks = "\n".join(f"- {item}" for item in pack.get("risks", [])) or "- No immediate risks detected."
     tasks = "\n".join(f"- {task}" for task in (project.get("tasks") or [])[:8]) or "- No mapped project tasks."
+    nested = "\n".join(
+        f"- {item['relative']} | signals: {', '.join(item.get('signals') or []) or 'none'} | scripts: {', '.join(item.get('scripts') or []) or 'none'}"
+        for item in pack.get("nested_workspace_candidates", [])[:8]
+    ) or "- No nested app candidates detected."
     return f"""
 Workspace context pack:
 Workspace: {pack.get('workspace')}
@@ -197,6 +251,9 @@ Open project tasks:
 
 Current risks:
 {risks}
+
+Nested workspace candidates:
+{nested}
 
 Top workspace tree:
 {tree}
