@@ -327,7 +327,13 @@ class VaultIndexer:
         """Read full markdown content of a note."""
         full_path = self._safe_path(relative_path)
         if full_path.exists():
-            return full_path.read_text(encoding="utf-8", errors="ignore")
+            for attempt in range(3):
+                try:
+                    return full_path.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    if attempt == 2:
+                        return None
+                    time.sleep(0.15)
         return None
 
     def write_note_content(self, relative_path: str, content: str) -> bool:
@@ -335,7 +341,14 @@ class VaultIndexer:
         self._ensure_writable(relative_path)
         full_path = self._safe_path(relative_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content, encoding="utf-8")
+        for attempt in range(3):
+            try:
+                full_path.write_text(content, encoding="utf-8")
+                return True
+            except OSError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.15)
         return True
 
     def create_note(self, folder: str, filename: str, content: str, frontmatter_data: Dict = None) -> str:

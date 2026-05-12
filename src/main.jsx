@@ -82,19 +82,58 @@ function apiUrl(path) {
 
 async function api(path, options = {}) {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
-  const res = await fetch(apiUrl(path), {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { "X-ObsidianAI-Token": token } : {}),
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${text || res.statusText}`);
+  const { timeoutMs = 60000, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(apiUrl(path), {
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "X-ObsidianAI-Token": token } : {}),
+        ...(fetchOptions.headers || {}),
+      },
+      ...fetchOptions,
+      signal: fetchOptions.signal || controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${res.status} ${text || res.statusText}`);
+    }
+    return res.json();
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Запрос занял слишком много времени. Попробуй короче задачу или переключись в Chat для обычного вопроса.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  return res.json();
+}
+
+function isSimpleConversation(text) {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  const actionWords = [
+    "создай",
+    "сделай",
+    "напиши",
+    "исправь",
+    "добавь",
+    "удали",
+    "переименуй",
+    "обнови",
+    "измени",
+    "запиши",
+    "create",
+    "write",
+    "fix",
+    "add",
+    "delete",
+    "update",
+    "rename",
+  ];
+  if (actionWords.some((word) => normalized.includes(word))) return false;
+  return normalized.length < 120;
 }
 
 function StatTile({ icon: Icon, label, value, tone = "teal" }) {
@@ -386,14 +425,16 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
   async function sendChat() {
     const text = input.trim();
     if (!text || busy) return;
+    const effectiveMode = mode === "actions" && isSimpleConversation(text) ? "chat" : mode;
     const next = [...messages, { role: "user", content: text }, { role: "assistant", content: "" }];
     setMessages(next);
     setInput("");
     setBusy(true);
     try {
-      if (mode === "actions") {
+      if (effectiveMode === "actions") {
         const data = await api("/api/ai/actions/propose", {
           method: "POST",
+          timeoutMs: 70000,
           body: JSON.stringify({
             goal: text,
             provider: "ollama",
@@ -424,6 +465,7 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
             ? { "X-ObsidianAI-Token": localStorage.getItem(AUTH_TOKEN_KEY) }
             : {}),
         },
+        signal: AbortSignal.timeout(70000),
         body: JSON.stringify({
           provider: "ollama",
           model: settings?.default_model || "qwen3:latest",
@@ -458,7 +500,10 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
     } catch (error) {
       setMessages((current) => {
         const copy = [...current];
-        copy[copy.length - 1] = { role: "assistant", content: `Ошибка: ${error.message || error}` };
+        copy[copy.length - 1] = {
+          role: "assistant",
+          content: `Ошибка: ${error.message || error}\n\nЯ снял зависший запрос. Для простого общения включи Chat, для изменения файлов оставь Actions.`,
+        };
         return copy;
       });
     } finally {

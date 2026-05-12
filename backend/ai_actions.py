@@ -8,6 +8,7 @@ allowed to propose JSON; action_manager still owns validation, diffing and write
 import json
 import re
 import time
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,8 @@ from action_manager import propose_action
 from ai_engine import ai_engine
 from project_intelligence import load_all_project_tasks, load_projects
 from vault_manager import VaultIndexer
+
+ACTION_TIMEOUT_SECONDS = 55
 
 
 ACTION_SCHEMA = """
@@ -114,12 +117,23 @@ async def propose_ai_actions(
     messages = [{"role": "user", "content": prompt}]
 
     result_text = ""
-    async for chunk in ai_engine.stream_chat(provider, model, messages, vault_context=context):
-        result_text += chunk
+    try:
+        async with asyncio.timeout(ACTION_TIMEOUT_SECONDS):
+            async for chunk in ai_engine.stream_chat(provider, model, messages, vault_context=context):
+                result_text += chunk
+    except TimeoutError:
+        result_text = (
+            "Action generation timed out. The request was saved as a reviewable "
+            "plan instead of waiting forever."
+        )
+        raw_actions = [_fallback_action(goal)]
+    else:
+        raw_actions = None
 
     try:
-        parsed = _extract_json(result_text)
-        raw_actions = parsed.get("actions", [])
+        if raw_actions is None:
+            parsed = _extract_json(result_text)
+            raw_actions = parsed.get("actions", [])
         if not isinstance(raw_actions, list) or not raw_actions:
             raw_actions = [_fallback_action(goal)]
     except Exception:
