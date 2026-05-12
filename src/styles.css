@@ -1071,6 +1071,17 @@ select:focus {
   padding: 12px;
 }
 
+.action-error {
+  margin: 8px 0 0;
+  border-radius: 8px;
+  background: #fff0c9;
+  color: #7b4a00;
+  padding: 9px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .action-title {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;

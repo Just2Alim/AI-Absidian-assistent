@@ -83,6 +83,13 @@ def _backup_project_file(path: Path) -> Optional[str]:
     return str(backup_path)
 
 
+def _best_effort_vault_backup(indexer: VaultIndexer, path: str) -> Optional[str]:
+    try:
+        return indexer.backup_file(path)
+    except OSError:
+        return None
+
+
 def _build_note_content(content: str, frontmatter: Optional[Dict[str, Any]] = None) -> str:
     if not frontmatter:
         return content
@@ -191,8 +198,8 @@ async def approve_action(action_id: str, indexer: Optional[VaultIndexer]) -> Dic
     action = await get_action_request(action_id)
     if not action:
         raise ValueError("Action not found")
-    if action["status"] != "pending":
-        raise ValueError(f"Action is not pending: {action['status']}")
+    if action["status"] not in {"pending", "failed"}:
+        raise ValueError(f"Action is not pending or retryable: {action['status']}")
 
     await set_action_status(action_id, "approved")
     payload = action["payload"]
@@ -222,11 +229,8 @@ async def approve_action(action_id: str, indexer: Optional[VaultIndexer]) -> Dic
         elif action_type == "append_note":
             if not indexer:
                 raise ValueError("Vault is not configured")
-            backup = indexer.backup_file(payload["path"])
-            old_content = indexer.read_note_content(payload["path"]) or ""
-            separator = "\n\n" if old_content and not old_content.endswith("\n\n") else ""
-            new_content = old_content + separator + payload.get("content", "").strip() + "\n"
-            indexer.write_note_content(payload["path"], new_content)
+            backup = _best_effort_vault_backup(indexer, payload["path"])
+            indexer.append_note_content(payload["path"], payload.get("content", ""))
             result = {"path": payload["path"], "backup": backup, "mode": "append"}
 
         elif action_type == "delete_note":
@@ -272,8 +276,8 @@ async def reject_action(action_id: str, reason: str = "") -> Dict[str, Any]:
     action = await get_action_request(action_id)
     if not action:
         raise ValueError("Action not found")
-    if action["status"] != "pending":
-        raise ValueError(f"Action is not pending: {action['status']}")
+    if action["status"] not in {"pending", "failed"}:
+        raise ValueError(f"Action is not pending or retryable: {action['status']}")
     await set_action_status(action_id, "rejected", reason or None)
     await record_audit_log(
         entity_type="action_request",

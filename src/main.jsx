@@ -1352,15 +1352,22 @@ function LearningView({ learningItems, learningSettings, settings, refreshAll })
 }
 
 function ActionQueue({ actions, refreshAll, compact = false }) {
-  const pending = actions.filter((item) => item.status === "pending");
-  const visible = compact ? pending.slice(0, 3) : actions;
+  const retryable = actions.filter((item) => ["pending", "failed"].includes(item.status));
+  const visible = compact ? retryable.slice(0, 3) : actions;
+  const [error, setError] = useState("");
 
   async function decide(id, action) {
-    await api(`/api/actions/${id}/${action}`, {
-      method: "POST",
-      body: JSON.stringify(action === "reject" ? { reason: "Rejected from UI" } : {}),
-    });
-    await refreshAll();
+    setError("");
+    try {
+      await api(`/api/actions/${id}/${action}`, {
+        method: "POST",
+        body: JSON.stringify(action === "reject" ? { reason: "Rejected from UI" } : {}),
+      });
+    } catch (err) {
+      setError(err.message || String(err));
+    } finally {
+      await refreshAll();
+    }
   }
 
   return (
@@ -1369,6 +1376,7 @@ function ActionQueue({ actions, refreshAll, compact = false }) {
         <h2>Approval Queue</h2>
       </div>
       <div className="actions-list">
+        {error && <p className="form-error">{error}</p>}
         {visible.map((item) => (
           <div className="action-item" key={item.id}>
             <div className="action-title">
@@ -1377,11 +1385,12 @@ function ActionQueue({ actions, refreshAll, compact = false }) {
               <span>{item.status}</span>
             </div>
             {!compact && <pre className="diff">{item.diff_preview || item.summary}</pre>}
-            {item.status === "pending" && (
+            {item.error && <p className="action-error">{item.error}</p>}
+            {["pending", "failed"].includes(item.status) && (
               <div className="decision-row">
                 <button onClick={() => decide(item.id, "approve")}>
                   <Check size={16} />
-                  Approve
+                  {item.status === "failed" ? "Retry approve" : "Approve"}
                 </button>
                 <button className="ghost danger" onClick={() => decide(item.id, "reject")}>
                   <X size={16} />

@@ -170,7 +170,15 @@ class VaultIndexer:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         backup_path = self.vault_root / ".obsidian-ai" / "backups" / stamp / relative_path
         backup_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(full_path, backup_path)
+        for attempt in range(5):
+            try:
+                shutil.copy2(full_path, backup_path)
+                break
+            except OSError:
+                if attempt == 4:
+                    backup_path.write_bytes(full_path.read_bytes())
+                    break
+                time.sleep(0.2)
         return str(backup_path.relative_to(self.vault_root))
 
     def find_all_notes(self) -> List[Path]:
@@ -349,6 +357,29 @@ class VaultIndexer:
                 if attempt == 2:
                     raise
                 time.sleep(0.15)
+        return True
+
+    def append_note_content(self, relative_path: str, content: str) -> bool:
+        """Append content to a note without rewriting the full iCloud-backed file."""
+        self._ensure_writable(relative_path)
+        full_path = self._safe_path(relative_path)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        append_text = content.strip()
+        if not append_text:
+            return True
+        for attempt in range(5):
+            try:
+                needs_spacing = full_path.exists() and full_path.stat().st_size > 0
+                with full_path.open("a", encoding="utf-8") as file:
+                    if needs_spacing:
+                        file.write("\n\n")
+                    file.write(append_text)
+                    file.write("\n")
+                return True
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.25)
         return True
 
     def create_note(self, folder: str, filename: str, content: str, frontmatter_data: Dict = None) -> str:
