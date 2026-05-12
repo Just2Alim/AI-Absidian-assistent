@@ -31,6 +31,7 @@ from vault_manager import get_indexer, set_indexer, VaultIndexer
 from ai_engine import ai_engine, PROVIDERS
 from watcher import vault_watcher
 from action_manager import approve_action, propose_action, reject_action
+from project_intelligence import load_all_project_tasks, load_project, load_projects
 
 # ─────────────────────────────────────────────
 # App Setup
@@ -283,6 +284,31 @@ async def trigger_index(background_tasks: BackgroundTasks):
 async def vault_stats():
     stats = await get_vault_stats()
     return stats
+
+
+def _current_vault_root() -> Path:
+    indexer = get_indexer()
+    if indexer:
+        return indexer.vault_root
+    return Path("/Users/justalim/projects/obsidian-vault")
+
+
+@app.get("/api/projects")
+async def projects():
+    return {"projects": load_projects(_current_vault_root())}
+
+
+@app.get("/api/projects/tasks")
+async def project_tasks():
+    return {"tasks": load_all_project_tasks(_current_vault_root())}
+
+
+@app.get("/api/projects/{project_id}")
+async def project_detail(project_id: str):
+    project = load_project(_current_vault_root(), project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return {"project": project}
 
 
 @app.get("/api/notes")

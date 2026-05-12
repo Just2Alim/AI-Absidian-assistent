@@ -25,6 +25,7 @@ flowchart LR
     Vault["Obsidian Vault<br/>markdown, tasks, links"]
     Bridge["scripts/obsidian_local_agent.py<br/>Ollama mobile bridge"]
     API["FastAPI Core<br/>index, search, actions"]
+    Projects["Project Intelligence<br/>paths, git, tasks"]
     DB["SQLite FTS<br/>DuckDB Analytics"]
     UI["React Web UI<br/>phone + desktop"]
     Ollama["Ollama<br/>local models"]
@@ -36,6 +37,8 @@ flowchart LR
     Bridge --> API
     API --> DB
     API --> Vault
+    API --> Projects
+    Projects --> Vault
     UI --> API
     FutureShell --> UI
 ```
@@ -111,10 +114,10 @@ Protected areas:
 
 ### Phase 2: Project Intelligence
 
-- Project registry from `wiki/INDEX.md`
-- Per-project workspace pages
-- Task extraction from notes and code repositories
-- Git status and branch summaries
+- Project registry from `wiki/INDEX.md` ✅
+- Per-project workspace cards in the web UI ✅
+- Task extraction from project notes ✅
+- Git status and branch summaries ✅
 - Automatic session save into `outputs/sessions`
 
 ### Phase 3: Deep RAG

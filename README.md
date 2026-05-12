@@ -25,6 +25,12 @@ npm install
 npm run dev
 ```
 
+Or run both:
+
+```bash
+./scripts/start_dev.sh
+```
+
 Open:
 
 - Desktop: `http://localhost:5173`
@@ -69,6 +75,24 @@ inbox/remote-tasks.md
 ```
 
 The agent will process unchecked tasks and create pending actions instead of writing files directly.
+
+## Project Intelligence
+
+The app reads `wiki/INDEX.md` and each project wiki page to build a live project registry:
+
+- project path and repository URL;
+- stack and status from the vault;
+- open tasks from project notes;
+- runtime signals like Flutter, Node.js, Docker Compose, Firebase;
+- dedicated git repository status.
+
+API:
+
+```text
+GET /api/projects
+GET /api/projects/tasks
+GET /api/projects/{project_id}
+```
 
 ## Safety
 

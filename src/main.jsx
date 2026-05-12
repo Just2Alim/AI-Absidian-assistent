@@ -9,6 +9,7 @@ import {
   Clock3,
   Database,
   FileSearch,
+  FolderKanban,
   GitBranch,
   Inbox,
   LayoutDashboard,
@@ -31,6 +32,7 @@ const DEFAULT_VAULT = "/Users/justalim/projects/obsidian-vault";
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "command", label: "Command", icon: Bot },
+  { id: "projects", label: "Projects", icon: FolderKanban },
   { id: "vault", label: "Vault", icon: FileSearch },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "settings", label: "Settings", icon: Settings },
@@ -359,6 +361,91 @@ function VaultView({ notes, searchResults, query, setQuery, runSearch, selectNot
   );
 }
 
+function ProjectsView({ projects, projectTasks }) {
+  const active = projects.filter((project) => project.group.includes("Активные"));
+  const dirty = projects.filter((project) => project.git?.dirty > 0);
+  const withPaths = projects.filter((project) => project.path);
+
+  return (
+    <section className="view projects-layout">
+      <div className="metrics-row">
+        <StatTile icon={FolderKanban} label="Projects" value={formatNumber(projects.length)} />
+        <StatTile icon={Activity} label="Active" value={formatNumber(active.length)} tone="blue" />
+        <StatTile icon={GitBranch} label="Dirty Git" value={formatNumber(dirty.length)} tone="amber" />
+        <StatTile icon={Check} label="Known Paths" value={formatNumber(withPaths.length)} tone="violet" />
+      </div>
+
+      <div className="projects-grid">
+        {projects.map((project) => (
+          <article className="project-card" key={project.id}>
+            <div className="project-card-head">
+              <div>
+                <p className="eyebrow">{project.group.replace("📁 ", "")}</p>
+                <h2>{project.title}</h2>
+              </div>
+              <span className="project-status">{project.status}</span>
+            </div>
+            <p className="project-summary">{project.summary}</p>
+            <div className="project-meta">
+              <div>
+                <span>Stack</span>
+                <strong>{project.stack}</strong>
+              </div>
+              <div>
+                <span>Path</span>
+                <strong>{project.path || "not mapped"}</strong>
+              </div>
+            </div>
+            <div className="signal-row">
+              {(project.runtime?.signals || []).map((signal) => (
+                <span key={signal}>{signal}</span>
+              ))}
+              {project.github && <span>GitHub</span>}
+              {project.git?.available && <span>{project.git.branch || "git"}</span>}
+            </div>
+            {project.git?.available ? (
+              <div className={project.git.dirty ? "git-box warn" : "git-box ok"}>
+                <GitBranch size={16} />
+                <span>
+                  {project.git.dirty ? `${project.git.dirty} local changes` : "clean working tree"}
+                </span>
+              </div>
+            ) : (
+              <div className="git-box">
+                <GitBranch size={16} />
+                <span>{project.git?.reason || "git unavailable"}</span>
+              </div>
+            )}
+            <div className="task-stack">
+              {(project.tasks || []).slice(0, 4).map((task) => (
+                <div key={task}>
+                  <Clock3 size={14} />
+                  <span>{task}</span>
+                </div>
+              ))}
+              {!project.task_count && <p className="muted">No open tasks in project note.</p>}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="panel wide">
+        <div className="panel-head compact">
+          <h2>Open Tasks From Vault</h2>
+        </div>
+        <div className="tasks-table">
+          {projectTasks.slice(0, 18).map((item, index) => (
+            <div key={`${item.project_id}-${index}`}>
+              <strong>{item.project}</strong>
+              <span>{item.task}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ActionQueue({ actions, refreshAll, compact = false }) {
   const pending = actions.filter((item) => item.status === "pending");
   const visible = compact ? pending.slice(0, 3) : actions;
@@ -509,6 +596,8 @@ function App() {
   const [stats, setStats] = useState(null);
   const [notes, setNotes] = useState([]);
   const [actions, setActions] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [projectTasks, setProjectTasks] = useState([]);
   const [hubs, setHubs] = useState([]);
   const [orphans, setOrphans] = useState([]);
   const [query, setQuery] = useState("");
@@ -517,16 +606,20 @@ function App() {
   const [toast, setToast] = useState("");
 
   async function refreshAll() {
-    const [healthData, statsData, notesData, actionsData] = await Promise.all([
+    const [healthData, statsData, notesData, actionsData, projectsData, tasksData] = await Promise.all([
       api("/api/health"),
       api("/api/vault/stats"),
       api("/api/notes?limit=200"),
       api("/api/actions?limit=100"),
+      api("/api/projects"),
+      api("/api/projects/tasks"),
     ]);
     setHealth(healthData);
     setStats(statsData);
     setNotes(notesData.notes || []);
     setActions(actionsData.actions || []);
+    setProjects(projectsData.projects || []);
+    setProjectTasks(tasksData.tasks || []);
 
     Promise.all([api("/api/graph/hubs?n=10"), api("/api/graph/orphans")])
       .then(([hubData, orphanData]) => {
@@ -586,12 +679,13 @@ function App() {
         />
       );
     }
+    if (active === "projects") return <ProjectsView projects={projects} projectTasks={projectTasks} />;
     if (active === "analytics") {
       return <AnalyticsView stats={stats} hubs={hubs} orphans={orphans} actions={actions} refreshAll={refreshAll} />;
     }
     if (active === "settings") return <SettingsView health={health} setupVault={setupVault} runIndex={runIndex} />;
     return <Dashboard stats={stats} health={health} notes={notes} actions={actions} runIndex={runIndex} />;
-  }, [active, actions, health, hubs, notes, orphans, query, searchResults, selectedNote, stats]);
+  }, [active, actions, health, hubs, notes, orphans, projectTasks, projects, query, searchResults, selectedNote, stats]);
 
   return (
     <div className="app-shell">
