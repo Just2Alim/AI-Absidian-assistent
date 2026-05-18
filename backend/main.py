@@ -38,9 +38,14 @@ from vault_manager import get_indexer, set_indexer, VaultIndexer
 from ai_engine import ai_engine, PROVIDERS
 from watcher import vault_watcher
 from action_manager import PROJECTS_ROOT, approve_action, propose_action, reject_action
-from ai_actions import propose_ai_actions, _looks_like_code_request
+from ai_actions import propose_ai_actions, looks_like_code_request
 from analytics_engine import build_overview
-from context_pack import build_workspace_context_pack, context_pack_prompt, is_container_workspace
+from context_pack import (
+    build_workspace_context_pack,
+    context_pack_prompt,
+    find_nested_workspace_candidates,
+    is_container_workspace,
+)
 from learning_engine import (
     activate_learning_item, add_feedback_as_learning, add_learning_item,
     archive_learning_item, build_learning_context, get_learning_settings,
@@ -83,6 +88,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["Content-Type", "Authorization", "X-ObsidianAI-Token"],
 )
+
+INDEX_LOCK = asyncio.Lock()
 
 
 PUBLIC_PATHS = {
@@ -481,8 +488,7 @@ async def workspaces():
                 "markers": sorted(set(markers)),
                 "kind": "root",
             })
-            pack = build_workspace_context_pack(_current_vault_root(), resolved)
-            for nested in pack.get("nested_workspace_candidates", []):
+            for nested in find_nested_workspace_candidates(resolved):
                 nested_path = nested.get("path")
                 if not nested_path:
                     continue
@@ -549,16 +555,16 @@ async def get_ollama_models():
 
 
 async def run_full_index(indexer: VaultIndexer):
-    async def progress_cb(data):
-        await ws_manager.broadcast({"event": "index_progress", "data": data})
+    async with INDEX_LOCK:
+        async def progress_cb(data):
+            await ws_manager.broadcast({"event": "index_progress", "data": data})
 
-    stats = await indexer.index_all(progress_cb)
-    await ws_manager.broadcast({"event": "index_complete", "data": stats})
+        stats = await indexer.index_all(progress_cb)
+        await ws_manager.broadcast({"event": "index_complete", "data": stats})
 
-    # Save snapshot to DuckDB
-    vault_stats = await get_vault_stats()
-    record_snapshot(vault_stats)
-    print(f"[APP] Full index complete: {stats}")
+        vault_stats = await get_vault_stats()
+        record_snapshot(vault_stats)
+        print(f"[APP] Full index complete: {stats}")
 
 
 # ─────────────────────────────────────────────
@@ -783,7 +789,7 @@ async def ai_action_proposal(req: AIActionRequest):
         settings = await app_settings()
         workspace_root = _safe_workspace_root(req.working_directory or settings.get("working_directory"))
         context_pack = build_workspace_context_pack(_current_vault_root(), workspace_root)
-        if _looks_like_code_request(req.goal) and is_container_workspace(context_pack):
+        if looks_like_code_request(req.goal) and is_container_workspace(context_pack):
             suggestions = ", ".join(
                 item.get("relative", "")
                 for item in context_pack.get("nested_workspace_candidates", [])[:6]
@@ -803,6 +809,8 @@ async def ai_action_proposal(req: AIActionRequest):
             working_directory=workspace_root,
         )
         return {"status": "pending_approval", **result}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(400, str(exc))
 

@@ -154,7 +154,7 @@ def _fallback_action(goal: str, workspace: Optional[Path] = None) -> Dict[str, A
     }
 
 
-def _looks_like_code_request(goal: str) -> bool:
+def looks_like_code_request(goal: str) -> bool:
     text = goal.lower()
     hints = [
         "файл", "python", "пайтон", "скрипт", "код", "gui", "интерфейс", "tkinter",
@@ -162,6 +162,9 @@ def _looks_like_code_request(goal: str) -> bool:
         "config", "script", "app", "create file", "write file",
     ]
     return any(hint in text for hint in hints)
+
+
+_looks_like_code_request = looks_like_code_request
 
 
 def _looks_like_code_path(value: str) -> bool:

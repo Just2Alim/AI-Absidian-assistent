@@ -103,7 +103,14 @@ async function api(path, options = {}) {
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`${res.status} ${text || res.statusText}`);
+      let detail = text || res.statusText;
+      try {
+        const parsed = JSON.parse(text);
+        detail = parsed.detail || parsed.message || detail;
+      } catch {
+        // Keep the raw server response when it is not JSON.
+      }
+      throw new Error(`${res.status} ${detail}`);
     }
     return res.json();
   } catch (error) {
@@ -555,7 +562,8 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
       }
     } catch (error) {
       const message = String(error.message || error);
-      const workspaceHint = message.includes("Selected workspace is a container with nested projects")
+      const cleanMessage = message.replace(/^\d{3}\s+/, "");
+      const workspaceHint = cleanMessage.includes("Selected workspace is a container with nested projects")
         ? "Выбран общий контейнер проектов. Сначала переключи Active Workspace на одну из concrete project folders справа, потом повтори действие."
         : null;
       setMessages((current) => {
@@ -563,8 +571,8 @@ function CommandCenter({ actions, refreshAll, settings, saveSettings, workspaces
         copy[copy.length - 1] = {
           role: "assistant",
           content: workspaceHint
-            ? `Ошибка: ${message}\n\n${workspaceHint}`
-            : `Ошибка: ${message}\n\nЯ снял зависший запрос. Для простого общения включи Chat, для изменения файлов оставь Actions.`,
+            ? `Ошибка: ${cleanMessage}\n\n${workspaceHint}`
+            : `Ошибка: ${cleanMessage}\n\nЯ снял зависший запрос. Для простого общения включи Chat, для изменения файлов оставь Actions.`,
         };
         return copy;
       });

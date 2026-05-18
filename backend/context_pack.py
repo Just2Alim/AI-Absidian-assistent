@@ -99,8 +99,9 @@ def _runtime_summary(root: Path) -> Dict[str, Any]:
     }
 
 
-def _nested_workspace_candidates(root: Path, limit: int = 10) -> List[Dict[str, Any]]:
+def find_nested_workspace_candidates(root: Path, limit: int = 10) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
+    seen = set()
     for marker in NESTED_RUNTIME_FILES:
         for path in sorted(root.rglob(marker), key=lambda item: str(item).lower()):
             try:
@@ -112,23 +113,23 @@ def _nested_workspace_candidates(root: Path, limit: int = 10) -> List[Dict[str, 
             if any(part in {".git", "node_modules", "dist", "build", ".venv"} for part in rel.parts):
                 continue
             project_root = path.parent
+            resolved = str(project_root.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
             runtime = _runtime_summary(project_root)
             items.append({
-                "path": str(project_root),
+                "path": resolved,
                 "relative": str(project_root.relative_to(root)),
                 "signals": runtime["signals"],
                 "scripts": runtime["scripts"][:6],
             })
             if len(items) >= limit:
                 return items
-    deduped = []
-    seen = set()
-    for item in items:
-        if item["path"] in seen:
-            continue
-        seen.add(item["path"])
-        deduped.append(item)
-    return deduped[:limit]
+    return items[:limit]
+
+
+_nested_workspace_candidates = find_nested_workspace_candidates
 
 
 def is_container_workspace(pack: Dict[str, Any]) -> bool:
@@ -182,7 +183,7 @@ def build_workspace_context_pack(vault_root: Path, workspace: Path) -> Dict[str,
     workspace = workspace.resolve()
     project = _matching_project(vault_root, workspace)
     runtime = _runtime_summary(workspace)
-    nested_candidates = _nested_workspace_candidates(workspace) if not runtime["signals"] else []
+    nested_candidates = find_nested_workspace_candidates(workspace) if not runtime["signals"] else []
     git = _git_summary(workspace)
     important = [
         {

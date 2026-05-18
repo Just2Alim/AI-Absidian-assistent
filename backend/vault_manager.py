@@ -17,7 +17,7 @@ import networkx as nx
 
 from database import (
     upsert_note, get_all_notes, get_vault_config, save_vault_config,
-    clear_note_relations, replace_note_links, replace_note_tasks
+    clear_note_relations, prune_notes_not_in_paths, replace_note_links, replace_note_tasks
 )
 
 
@@ -222,6 +222,20 @@ class VaultIndexer:
                 errors += 1
                 print(f"[VAULT] Error parsing {fp}: {e}")
 
+        if total and not all_notes:
+            stats = {
+                "total": total,
+                "indexed": indexed,
+                "errors": errors,
+                "graph_nodes": self.graph.number_of_nodes(),
+                "graph_edges": self.graph.number_of_edges(),
+                "pruned": 0,
+                "relations_skipped": True,
+            }
+            print(f"[VAULT] Indexed {indexed}/{total} notes, skipped relation reset because no notes were parsed")
+            return stats
+
+        pruned = await prune_notes_not_in_paths(list(all_notes.keys()), str(self.vault_root))
         await clear_note_relations()
 
         # Build link graph and DB relations
@@ -249,6 +263,7 @@ class VaultIndexer:
             "errors": errors,
             "graph_nodes": self.graph.number_of_nodes(),
             "graph_edges": self.graph.number_of_edges(),
+            "pruned": pruned,
         }
         print(f"[VAULT] Indexed {indexed}/{total} notes, {errors} errors")
         return stats

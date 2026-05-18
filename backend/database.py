@@ -367,7 +367,8 @@ async def upsert_note(note_data: Dict[str, Any]) -> str:
                 char_count  = excluded.char_count,
                 tags        = excluded.tags,
                 frontmatter = excluded.frontmatter,
-                checksum    = excluded.checksum
+                checksum    = excluded.checksum,
+                vault_path  = excluded.vault_path
         """, (
             note_id,
             note_data["path"],
@@ -413,6 +414,31 @@ async def clear_note_relations():
         await db.execute("DELETE FROM links")
         await db.execute("DELETE FROM tasks")
         await db.commit()
+
+
+async def prune_notes_not_in_paths(paths: List[str], vault_path: str) -> int:
+    """Remove stale note rows after a successful full-vault scan."""
+    if not paths:
+        return 0
+    placeholders = ",".join("?" for _ in paths)
+    async with aiosqlite.connect(SQLITE_PATH) as db:
+        cursor = await db.execute(
+            f"SELECT id FROM notes WHERE path NOT IN ({placeholders})",
+            paths,
+        )
+        stale_ids = [row[0] for row in await cursor.fetchall()]
+        if not stale_ids:
+            return 0
+        stale_placeholders = ",".join("?" for _ in stale_ids)
+        await db.execute(f"DELETE FROM note_fts WHERE note_id IN ({stale_placeholders})", stale_ids)
+        await db.execute(
+            f"DELETE FROM links WHERE source_id IN ({stale_placeholders}) OR target_id IN ({stale_placeholders})",
+            [*stale_ids, *stale_ids],
+        )
+        await db.execute(f"DELETE FROM tasks WHERE note_id IN ({stale_placeholders})", stale_ids)
+        await db.execute(f"DELETE FROM notes WHERE id IN ({stale_placeholders})", stale_ids)
+        await db.commit()
+        return len(stale_ids)
 
 
 async def replace_note_links(source_id: str, links: List[Dict[str, Any]]):
